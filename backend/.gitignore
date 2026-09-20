@@ -21,3 +21,6 @@ Thumbs.db
 #=== AI 모델 관련 파일 ===#
 *.pkl
 *.joblib
+
+#=== V World API 대용 MOCK 데이터 ===#
+mock_data.py
