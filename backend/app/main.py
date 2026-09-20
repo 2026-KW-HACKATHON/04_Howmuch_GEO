@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from app.routers.ai_model import router as model_router
+from app.routers.cadastral import router as cadastral_router
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
@@ -9,6 +10,7 @@ app = FastAPI()
 
 #AI 모델 라우터 등록
 app.include_router(model_router)
+app.include_router(cadastral_router)
 
 #.env 파일 로드
 load_dotenv()
