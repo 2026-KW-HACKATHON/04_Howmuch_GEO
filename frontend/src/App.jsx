@@ -3,6 +3,7 @@ import KakaoMap from "./components/KakaoMap"
 import SideBar from './components/SideBar';
 import ModelPredictForm from './components/ModelPredictForm';
 import { predictModel } from './api/ai_model_api';
+import { getCadastral } from './api/cadastral_api';
 
 function App() {
     const [isOpen, setIsOpen] = useState(true);
@@ -23,12 +24,23 @@ function App() {
         }
 	};
 
+    //필지 정보 API 호출 Handler
+    const handleCadastralData = async () => {
+        try {
+            const response = await getCadastral();
+            return response;
+        } catch (err){
+            console.log("[ handleCadastralData 오류 발생 ] : ", err);
+            throw err;
+        }
+    };
+
     return (
         <div className="relative w-screen h-screen overflow-hidden">
             
             {/* Kakao 지도 영역 */}
             <main className="absolute inset-0 w-full h-full">
-                <KakaoMap />
+                <KakaoMap onLoadCadastralData={handleCadastralData}/>
             </main>
 
             {/* 사이드바 영역 */}
