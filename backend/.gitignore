@@ -17,3 +17,7 @@ venv/
 .DS_Store
 Thumbs.db
 *.log
+
+#=== AI 모델 관련 파일 ===#
+*.pkl
+*.joblib
