@@ -4,10 +4,13 @@ import { useEffect, useState, useRef } from 'react';
 const KakaoMap = ({onLoadCadastralData}) => {
     const mapRef = useRef(null);
     const polygonsRef = useRef({});
+    const featuresMapRef = useRef({});
 
     const [map, setMap] = useState(null);
     const [selectedPnus, setSelectedPnus] = useState([]);
-    const featuresMapRef = useRef({});
+    
+    const selectedPnusRef = useRef(selectedPnus);
+    selectedPnusRef.current = selectedPnus;
 
     //Kakao Map 로드용 useEffect
     useEffect(() => {
@@ -21,7 +24,7 @@ const KakaoMap = ({onLoadCadastralData}) => {
 
             const options = {
                 center: new window.kakao.maps.LatLng(37.621, 127.059), //광운대 근처의 좌표 설정
-                level: 3,
+                level: 2,
             };
 
             const kakaoMap = new window.kakao.maps.Map(container, options);
@@ -56,9 +59,9 @@ const KakaoMap = ({onLoadCadastralData}) => {
         if (!map) return;
 
         //Cadastral 데이터를 받아오는 내부 함수
-        const fetchCadastralData = async () => {
+        const fetchCadastralData = async (geomFilter) => {
             try {
-                const response = await onLoadCadastralData();
+                const response = await onLoadCadastralData({geom_filter : geomFilter});
 
                 //polygon 초기화
                 Object.values(polygonsRef.current).forEach((poly) => poly.setMap(null));
@@ -78,7 +81,7 @@ const KakaoMap = ({onLoadCadastralData}) => {
                     featuresMapRef.current[pnu] = feature;
 
                     const makePath = (ring) => ring.map(([lng, lat]) => new window.kakao.maps.LatLng(lat, lng));
-
+                    
                     let paths = [];
 
                     if (geometry.type === 'Polygon') {
@@ -89,8 +92,8 @@ const KakaoMap = ({onLoadCadastralData}) => {
 
                     //조회한 모든 
                     paths.forEach((path) => {
-                        const isSelected = selectedPnus.includes(pnu);
-
+                        const isSelected = selectedPnusRef.current.includes(pnu);
+                        
                         const polygon = new window.kakao.maps.Polygon({
                             path: path,
                             strokeWeight: 2,
@@ -99,7 +102,6 @@ const KakaoMap = ({onLoadCadastralData}) => {
                             fillColor: isSelected ? '#FF5733' : '#fff', 
                             fillOpacity: isSelected ? 0.6 : 0.2,
                         });
-
                         polygon.setMap(map);
                         
                         //Polygon 클릭시 상호작용 이벤트
@@ -122,7 +124,34 @@ const KakaoMap = ({onLoadCadastralData}) => {
             }
         };
 
-        fetchCadastralData();
+        //지도 움직임 Handler
+        const handleMapMovement = async () => {
+            const currentLevel = map.getLevel();
+            const SHOW_CADASTRAL_LEVEL = 2;
+
+            //필지 확대 레벨이 일정 기준 미달이라면 표시제한
+            if (currentLevel > SHOW_CADASTRAL_LEVEL) {
+                Object.values(polygonsRef.current).forEach((poly) => poly.setMap(null));
+                polygonsRef.current = {};
+                return;
+            }
+
+            //현재 화면 좌표 및 geomFilter 계산
+            const bounds = map.getBounds();
+            const sw = bounds.getSouthWest();
+            const ne = bounds.getNorthEast();
+            const geomFilter = `BOX(${sw.getLng()},${sw.getLat()},${ne.getLng()},${ne.getLat()})`;
+
+            await fetchCadastralData(geomFilter);
+        };
+
+        handleMapMovement();
+
+        window.kakao.maps.event.addListener(map, 'idle', handleMapMovement);
+
+        return () => {
+            window.kakao.maps.event.removeListener(map, 'idle', handleMapMovement);
+        }
     }, [map]);
 
     //selectedPnus 변경시 업데이트용 useEffect
