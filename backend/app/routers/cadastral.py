@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 import httpx
 import os
-from app.routers.mock_data import MOCK_CADASTRAL_RESPONSE
+#from app.routers.mock_data import MOCK_CADASTRAL_RESPONSE
 from app.schemas.cadastral.cadastral_request import CadastralRequest
 
 router = APIRouter(
@@ -15,7 +15,7 @@ router = APIRouter(
 async def get_mock_cadastral():
 
     #대신 사용할 MOCK 데이터
-    response = MOCK_CADASTRAL_RESPONSE
+    response = ""
 
     return response
 
