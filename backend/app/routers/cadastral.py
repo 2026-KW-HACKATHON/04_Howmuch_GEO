@@ -1,26 +1,39 @@
 from fastapi import APIRouter, HTTPException
 import httpx
 import os
-#from app.routers.mock_data import MOCK_CADASTRAL_RESPONSE
 from app.schemas.cadastral.cadastral_request import CadastralRequest
 
 router = APIRouter(
     tags=["Cadastral"]
 )
 
+
+# ======================================================= #
+#              Mock 필지 데이터 호출용 API
+# ======================================================= #
+"""
 #Mock 필지 데이터 호출용 API
+from app.routers.mock_data import MOCK_CADASTRAL_RESPONSE
 @router.post(
-    "/cadastral/mock",
+    "/cadastral/vworld",
 )
-async def get_mock_cadastral():
+async def get_vworld_cadastral(request: CadastralRequest):
 
     #대신 사용할 MOCK 데이터
-    response = ""
+    response = MOCK_CADASTRAL_RESPONSE
 
     return response
+"""
+# ======================================================= #
 
 
-#Vworld 필지 데이터 호출용 API
+
+
+
+# ======================================================= #
+#              Mock 필지 데이터 호출용 API
+# ======================================================= #
+
 @router.post(
     "/cadastral/vworld",
 )
@@ -96,3 +109,5 @@ async def get_vworld_cadastral(request: CadastralRequest):
             
         except httpx.RequestError as e:
             raise HTTPException(status_code=500, detail=f"V-World API 통신 실패: {str(e)}")
+
+# ======================================================= #
