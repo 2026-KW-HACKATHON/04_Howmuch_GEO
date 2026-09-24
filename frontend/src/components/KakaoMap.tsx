@@ -1,8 +1,15 @@
+import React from 'react';
 import { useKakaoMap } from '../hooks/useKakaoMap';
 import { useMapDragSelect } from '../hooks/useMapDragSelect';
 import MapLegend from './MapLegend';
 
-const KakaoMap = ({ onLoadCadastralData }) => {
+//컴포넌트 Props 타입 정의
+interface KakaoMapProps {
+    onLoadCadastralData: () => Promise<any>;
+}
+
+//카카오맵 컴포넌트
+const KakaoMap: React.FC<KakaoMapProps> = ({ onLoadCadastralData }) => {
     //지도 및 필지 관리 훅
     const { mapRef, map, selectedPnus, setSelectedPnus, featuresMapRef } = useKakaoMap(onLoadCadastralData);
     
