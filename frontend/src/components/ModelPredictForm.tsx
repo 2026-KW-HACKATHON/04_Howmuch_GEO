@@ -1,7 +1,18 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
+
+//컴포넌트 Props 타입 정의
+interface ModelPredictFormProps {
+    onPredictModel: (requestData: {
+        area: number;
+        floor: number;
+        building_age: number;
+        subway_distance: number;
+    }) => Promise<any>;
+    isOpen: boolean;
+}
 
 //AI 예측 모델 Form 컴포넌트 ( Dummy Model )
-const ModelPredictForm = ({onPredictModel, isOpen}) => {
+const ModelPredictForm: React.FC<ModelPredictFormProps> = ({onPredictModel, isOpen}) => {
     //useState 정의부
     const [formData, setFormData] = useState({
         area: 0,
@@ -9,12 +20,12 @@ const ModelPredictForm = ({onPredictModel, isOpen}) => {
         building_age: 0,
         subway_distance: 0,
     })
-    const [predictedPrice, setPredictedPrice] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(null);
+    const [predictedPrice, setPredictedPrice] = useState<number | null>(null);
+    const [loading, setLoading] = useState<boolean>(false);
+    const [error, setError] = useState<string | null>(null);
 
     //Form 의 Input 값 변화시의 Handler
-    const handleChange = (e) => {
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 
         //변화한 값 구조 분해 할당
         const { name, value } = e.target;
@@ -27,7 +38,7 @@ const ModelPredictForm = ({onPredictModel, isOpen}) => {
     }
 
     //Form 제출시의 Handler
-    const handleSubmit = async (e) => {
+    const handleSubmit = async (e: any) => {
         //불필요한 페이지 Reload 방지
         e.preventDefault();
 
