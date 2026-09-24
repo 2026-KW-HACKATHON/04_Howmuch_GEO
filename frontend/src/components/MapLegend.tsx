@@ -1,5 +1,7 @@
+import React from 'react';
+
 //지도 범례 컴포넌트
-const MapLegend = () => {
+const MapLegend: React.FC = () => {
     //범례 항목 데이터 배열
     const legendItems = [
         { label: '제1종전용주거지역', color: 'bg-[#FFF9C4]' },

@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+/// <reference types="vite/client" />
+
+import { useState } from 'react';
 import KakaoMap from "./components/KakaoMap"
 import SideBar from './components/SideBar';
 import ModelPredictForm from './components/ModelPredictForm';
@@ -7,8 +9,8 @@ import { getVWorldCadastral } from './api/cadastral_api';
 import ReCAPTCHA from 'react-google-recaptcha';
 
 function App() {
-    const [isOpen, setIsOpen] = useState(true);
-    const [isVerified, setIsVerified] = useState(false);
+    const [isOpen, setIsOpen] = useState<boolean>(true);
+    const [isVerified, setIsVerified] = useState<boolean>(false);
 
     //사이드바 토글시 isOpen 값 전환
     const toggleSidebar = () => {
@@ -16,14 +18,14 @@ function App() {
     };
 
     //ReCaptcha Handler
-    const handleCaptchaChange = (token) => {
+    const handleCaptchaChange = (token: string | null) => {
         if (token) {
             setIsVerified(true);
         }
     };
 
     //AI 모델 API 호출 Handler
-    const handlePredictModel = async (requestData) => {
+    const handlePredictModel = async (requestData: any) => {
         try {
             const response = await predictModel(requestData);
             return response

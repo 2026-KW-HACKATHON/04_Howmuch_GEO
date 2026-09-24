@@ -1,3 +1,5 @@
+/// <reference types="vite/client" />
+
 import axios from 'axios';
 
 //API HTTP Router Handler 클라이언트
