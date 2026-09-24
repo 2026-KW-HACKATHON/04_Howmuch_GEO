@@ -26,8 +26,9 @@ const KakaoMap = ({onLoadCadastralData}) => {
                 center: new window.kakao.maps.LatLng(37.621, 127.059), //광운대 근처의 좌표 설정
                 level: 2,
             };
-
+            
             const kakaoMap = new window.kakao.maps.Map(container, options);
+            
 
             //useState 로 map 저장
             setMap(kakaoMap);
@@ -61,7 +62,7 @@ const KakaoMap = ({onLoadCadastralData}) => {
         //Cadastral 데이터를 받아오는 내부 함수
         const fetchCadastralData = async (geomFilter) => {
             try {
-                const response = await onLoadCadastralData({geom_filter : geomFilter});
+                const response = await onLoadCadastralData(geomFilter);
 
                 //polygon 초기화
                 Object.values(polygonsRef.current).forEach((poly) => poly.setMap(null));
