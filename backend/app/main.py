@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from pydantic import BaseModel
 import os
 import httpx
 import gdown
@@ -40,11 +41,12 @@ VWORLD_API_KEY = os.getenv("VWORLD_API_KEY")
 VWORLD_WFS_URL = os.getenv("VWORLD_WFS_URL")
 VWORLD_DOMAIN = os.getenv("VWORLD_DOMAIN")
 
+class CadastralRequest(BaseModel):
+    bbox: str
+
 @app.post("/api/cadastral")
 @app.get("/api/cadastral")
-async def proxy_cadastral(
-    bbox: str = Query(..., description="BOX(minx,miny,maxx,maxy)"),
-):
+async def proxy_cadastral(payload: CadastralRequest):
     params = {
         "service": "data",
         "version": "2.0.0",
@@ -55,7 +57,7 @@ async def proxy_cadastral(
         "domain": VWORLD_DOMAIN,
         "format": "json",
         "crs": "EPSG:4326",
-        "geomFilter": bbox,
+        "geomFilter": payload.bbox,
         "size": "1000",
     }
 
