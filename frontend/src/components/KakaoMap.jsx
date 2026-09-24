@@ -1,5 +1,6 @@
 import { useKakaoMap } from '../hooks/useKakaoMap';
 import { useMapDragSelect } from '../hooks/useMapDragSelect';
+import MapLegend from './MapLegend';
 
 const KakaoMap = ({ onLoadCadastralData }) => {
     //지도 및 필지 관리 훅
@@ -33,6 +34,7 @@ const KakaoMap = ({ onLoadCadastralData }) => {
 
             {/* 지도 DOM 컨테이너 */}
             <div ref={mapRef} className="w-full h-full" />
+            <MapLegend />
         </div>
     );
 };

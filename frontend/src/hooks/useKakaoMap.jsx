@@ -42,11 +42,15 @@ export const useKakaoMap = (onLoadCadastralData) => {
         script.async = true;
         script.onload = () => window.kakao.maps.load(initMap);
         document.head.appendChild(script);
+
     }, []);
 
     //필지 Polygon 렌더링 및 이동 Handler
     useEffect(() => {
         if (!map) return;
+
+        const useDistrictType = window.kakao.maps.MapTypeId.USE_DISTRICT;
+        map.addOverlayMapTypeId(useDistrictType);
 
         const fetchCadastralData = async () => {
             try {
