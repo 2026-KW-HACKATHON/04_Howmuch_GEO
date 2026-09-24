@@ -12,6 +12,7 @@ MODEL_DIR = os.getenv("MODEL_DIR")
 MODEL_URL = os.getenv("MODEL_URL")
 MODEL_PATH = os.path.join(MODEL_DIR, "model.pkl")
 FRONTEND_URL = os.getenv("FRONTEND_URL")
+BACKEND_URL = os.getenv("BACKEND_URL")
 
 #모델 파일 다운로드
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -29,7 +30,7 @@ app.include_router(model_router)
 #MiddleWare 설정 (개발단계 임시 설정)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_URL],
+    allow_origins=[FRONTEND_URL, BACKEND_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,6 +40,7 @@ VWORLD_API_KEY = os.getenv("VWORLD_API_KEY")
 VWORLD_WFS_URL = os.getenv("VWORLD_WFS_URL")
 VWORLD_DOMAIN = os.getenv("VWORLD_DOMAIN")
 
+@app.post("/api/cadastral")
 @app.get("/api/cadastral")
 async def proxy_cadastral(
     bbox: str = Query(..., description="BOX(minx,miny,maxx,maxy)"),
