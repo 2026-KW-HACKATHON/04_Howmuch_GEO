@@ -1,5 +1,13 @@
+import React, { ReactNode } from 'react'
+
+interface SideBarProps {
+    isOpen: boolean;
+    onToggleSidebar: () => void;
+    children: ReactNode;
+}
+
 //SideBar 컴포넌트
-const SideBar = ({ isOpen, onToggleSidebar, children }) => {
+const SideBar: React.FC<SideBarProps> = ({ isOpen, onToggleSidebar, children }) => {
     return (
         <div className="absolute top-0 left-0 h-screen z-20 flex pointer-events-none">
             
