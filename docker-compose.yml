@@ -2,14 +2,16 @@ services:
   # 백엔드
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
+      - ./backend:/app/backend
+      - ./AI:/app/AI
     environment:
       - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
     dns:
       - 8.8.8.8
       - 1.1.1.1

@@ -1,6 +1,6 @@
 from dataclasses import dataclass, replace
 
-from schema import(
+from AI.engine.schema import(
     PER_PYEONG_TO_PER_M2,
     ProjectParams,
     ProjectResult,

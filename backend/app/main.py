@@ -1,10 +1,16 @@
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-import os
+import os, sys
 import httpx
 import gdown
 import traceback
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
+print(root_dir)
+if root_dir not in sys.path:
+    sys.path.append(root_dir)
 
 #.env 파일 로드
 load_dotenv()
@@ -34,9 +40,16 @@ app = FastAPI()
 from app.routers.ai_model import router as model_router
 from app.routers.cadastral import router as cadastral_router
 
+from app.routers.owner import router as owner_router
+from app.routers.project import router as project_router
+from app.routers.zone import router as zone_router
+
 #AI 모델 라우터 등록
 app.include_router(model_router)
 app.include_router(cadastral_router)
+app.include_router(owner_router)
+app.include_router(project_router)
+app.include_router(zone_router)
 
 #MiddleWare 설정 (개발단계 임시 설정)
 app.add_middleware(
