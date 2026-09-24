@@ -33,10 +33,10 @@ function App() {
         }
 	};
 
-    //V-World 필지 정보 API 호출 Handler
-    const handleCadastralData = async (requestBody) => {
+    //필지 정보 API 호출 Handler
+    const handleCadastralData = async () => {
         try {
-            const response = await getVWorldCadastral(requestBody);
+            const response = await getVWorldCadastral();
             return response;
         } catch (err){
             console.log("[ handleCadastralData 오류 발생 ] : ", err);

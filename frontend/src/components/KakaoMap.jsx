@@ -60,9 +60,9 @@ const KakaoMap = ({onLoadCadastralData}) => {
         if (!map) return;
 
         //Cadastral 데이터를 받아오는 내부 함수
-        const fetchCadastralData = async (geomFilter) => {
+        const fetchCadastralData = async () => {
             try {
-                const response = await onLoadCadastralData(geomFilter);
+                const response = await onLoadCadastralData();
 
                 //polygon 초기화
                 Object.values(polygonsRef.current).forEach((poly) => poly.setMap(null));
@@ -137,17 +137,11 @@ const KakaoMap = ({onLoadCadastralData}) => {
                 return;
             }
 
-            //현재 화면 좌표 및 geomFilter 계산
-            const bounds = map.getBounds();
-            const sw = bounds.getSouthWest();
-            const ne = bounds.getNorthEast();
-            const geomFilter = `BOX(${sw.getLng()},${sw.getLat()},${ne.getLng()},${ne.getLat()})`;
-
-            await fetchCadastralData(geomFilter);
+            await fetchCadastralData();
         };
 
         handleMapMovement();
-
+        
         window.kakao.maps.event.addListener(map, 'idle', handleMapMovement);
 
         return () => {
