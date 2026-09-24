@@ -2,14 +2,21 @@ services:
   # 백엔드
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
+      - ./backend:/app/backend
+      - ./AI:/app/AI
     environment:
       - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    extra_hosts:
+      - "api.vworld.kr:211.188.33.95"
   
   # 프론트엔드
   frontend:
@@ -22,6 +29,10 @@ services:
       - ./frontend:/app
       - /app/node_modules
     environment:
+      - VITE_VWORLD_WFS_URL=/vworld-api/req/wfs
       - CHOKIDAR_USEPOLLING=true
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     depends_on:
       - backend

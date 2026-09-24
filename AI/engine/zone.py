@@ -1,7 +1,7 @@
 # 지도에서 고른 필지 목록 → 구역 단위 입력값(ZoneSummary)
 # 백엔드가 V-World/토지특성 API 로 받은 필지 정보를 ParcelInfo 리스트로 넘겨주면
 # 여기서 합산해서 ProjectParams 에 넣을 값과 슬라이더 범위를 만든다.
-from schema import ParcelInfo, ZoneSummary
+from AI.engine.schema import ParcelInfo, ZoneSummary
 
 # 용도지역 → (기준 용적률, 상한 용적률) %
 # ※ 서울시 도시계획조례 기준으로 잡은 시작값. 정비사업 상향 규정은 반영 안 됨 → 조례 확인 후 교체할 것
