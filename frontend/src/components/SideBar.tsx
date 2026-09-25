@@ -1,5 +1,6 @@
 import React, { ReactNode } from 'react'
 
+//SideBar Props
 interface SideBarProps {
     isOpen: boolean;
     onToggleSidebar: () => void;
@@ -14,13 +15,13 @@ const SideBar: React.FC<SideBarProps> = ({ isOpen, onToggleSidebar, children }) 
             {/* 사이드바 본체 */}
             <aside
                 className={`min-w-0 h-full bg-slate-900 text-white flex flex-col transition-all duration-300 shadow-2xl pointer-events-auto overflow-hidden ${
-                    isOpen ? 'w-96 p-4' : 'w-0 p-0'
+                    isOpen ? 'w-170 p-4' : 'w-0 p-0'
                 }`}
             >
 
                 {/* 사이드바 제목 영역 */}
                 <div className="text-xl font-bold mb-8 px-2 whitespace-nowrap">
-                    어디지오 Geo
+                    얼마 Geo
                 </div>
 
                 {/* 자식 컴포넌트 */}
