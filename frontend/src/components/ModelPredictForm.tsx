@@ -1,161 +1,122 @@
-import React, { useState } from 'react'
+import React from 'react';
+import Slider from './Slider';
+import { useModelPredictForm } from '../hooks/useModelPredictForm';
 
-//컴포넌트 Props 타입 정의
+//예측 폼 Props
 interface ModelPredictFormProps {
-    onPredictModel: (requestData: {
-        area: number;
-        floor: number;
-        building_age: number;
-        subway_distance: number;
-    }) => Promise<any>;
+    onHandleZoneData: (pnus: string[]) => Promise<any>;
+    onCalculateContribution: (requestData: any) => Promise<any>;
+    selectedPnus: string[];
     isOpen: boolean;
 }
 
-//AI 예측 모델 Form 컴포넌트 ( Dummy Model )
-const ModelPredictForm: React.FC<ModelPredictFormProps> = ({onPredictModel, isOpen}) => {
-    //useState 정의부
-    const [formData, setFormData] = useState({
-        area: 0,
-        floor: 0,
-        building_age: 0,
-        subway_distance: 0,
-    })
-    const [predictedPrice, setPredictedPrice] = useState<number | null>(null);
-    const [loading, setLoading] = useState<boolean>(false);
-    const [error, setError] = useState<string | null>(null);
-
-    //Form 의 Input 값 변화시의 Handler
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-
-        //변화한 값 구조 분해 할당
-        const { name, value } = e.target;
-        setFormData((prev) => ({
-
-            //다른 Input 값 보존을 위한 로직
-            ...prev,
-            [name]: value === '' ? '' : Number(value),
-        }))
-    }
-
-    //Form 제출시의 Handler
-    const handleSubmit = async (e: any) => {
-        //불필요한 페이지 Reload 방지
-        e.preventDefault();
-
-        //예측 전 초기화 단계
-        setLoading(true);
-        setPredictedPrice(null);
-        setError(null);
-
-        try {
-            // 백엔드 요청 스키마 반영 (Dummy Model)
-            const requestData = {
-                area: Number(formData.area),
-                floor: Number(formData.floor),
-                building_age: Number(formData.building_age),
-                subway_distance: Number(formData.subway_distance)
-            }
-            
-            //AI 예측 모델 API 호출
-            const data = await onPredictModel(requestData);
-
-            if (data && data.predicted_price !== undefined) {
-                setPredictedPrice(data.predicted_price);
-            } else {
-                throw new Error("예측 결과를 받아오지 못했습니다.");
-            }
-        } catch (err) {
-            setError("가격 예측 중 오류가 발생했습니다.");
-        } finally {
-            setLoading(false); //예측 후 로딩 해제
-        }
-    }
+//예측 폼 컨포넌트
+const ModelPredictForm: React.FC<ModelPredictFormProps> = ({ 
+    onHandleZoneData, 
+    onCalculateContribution,
+    selectedPnus,
+    isOpen 
+}) => {
+    const {
+        formData,
+        setFormData,
+        ownerData,
+        setOwnerData,
+        sliderData,
+        zoneInfo,
+        calcResult,
+        loading,
+        error,
+        handleChange,
+        handleSliderChange,
+        handleZoneData,
+        handleSubmit,
+    } = useModelPredictForm({ onHandleZoneData, onCalculateContribution, selectedPnus });
 
     return (
         <div className={`h-full w-full bg-slate-700 flex flex-col items-center p-6 font-sans overflow-y-auto transition-opacity ${isOpen ? 'opacity-100 duration-500' : 'opacity-0 pointer-events-none duration-100'}`}>
+            <div className="max-w-md w-full bg-slate-600 rounded-2xl shadow-lg border border-slate-500 p-8 flex flex-col items-center">
+                <h1 className="text-2xl font-bold text-slate-300 mb-5">얼마 GEO</h1>
 
-            {/* 예측 Form 박스 영역 */}
-            <div className="max-w-md w-full bg-slate-600 rounded-2xl shadow-lg border border-slate-500 p-8 flex flex-col items-center ">
-                <h1 className="text-2xl font-bold text-slate-300 mb-5">가격 예측 모델</h1>
-                <form onSubmit={handleSubmit} className="space-y-4">
+                {/* 구역 분석 버튼 */}
+                <button
+                    type="button"
+                    onClick={handleZoneData}
+                    disabled={loading}
+                    className="w-full py-2 mb-6 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition duration-200"
+                >
+                    {loading ? '분석 중...' : '구역 필지 분석하기'}
+                </button>
 
-                    {/* 면적 입력 영역 */}
+                <form onSubmit={handleSubmit} className="space-y-4 w-full">
                     <div>
-                        <label className="block text-sm font-semibold text-slate-300 mb-1">면적</label>
+                        <label className="block text-sm font-semibold text-slate-300 mb-1">구역 이름</label>
                         <input
-                            type="number"
-                            name="area"
-                            step="any"
-                            onChange={handleChange}
-                            placeholder="예: 84"
-                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            type="text"
+                            name="name"
+                            value={formData.name}
+                            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none"
                         />
                     </div>
 
-                    {/* 층수 입력 영역 */}
                     <div>
-                        <label className="block text-sm font-semibold text-slate-300 mb-1">층수</label>
+                        <label className="block text-sm font-semibold text-slate-300 mb-1">조합원 수</label>
                         <input
                             type="number"
-                            name="floor"
-                            step="any"
+                            name="member_count"
+                            value={formData.member_count}
                             onChange={handleChange}
-                            placeholder="예: 5"
-                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none"
                         />
                     </div>
 
-                    {/* 건물 연식 입력 영역 */}
                     <div>
-                        <label className="block text-sm font-semibold text-slate-300 mb-1">건물 연식</label>
+                        <label className="block text-sm font-semibold text-slate-300 mb-1">원하는 평형 (예: 84)</label>
                         <input
-                            type="number"
-                            name="building_age"
-                            step="any"
-                            onChange={handleChange}
-                            placeholder="예: 10"
-                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            type="text"
+                            value={ownerData.desired_unit}
+                            onChange={(e) => setOwnerData(prev => ({ ...prev, desired_unit: e.target.value }))}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none"
                         />
                     </div>
 
-                    {/* 역 거리 입력 영역 */}
                     <div>
-                        <label className="block text-sm font-semibold text-slate-300 mb-1">역 거리</label>
+                        <label className="block text-sm font-semibold text-slate-300 mb-1">소유 토지/건물 공시가격 (만원)</label>
                         <input
                             type="number"
-                            name="subway_distance"
-                            step="any"
-                            onChange={handleChange}
-                            placeholder="예: 300"
-                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            value={ownerData.official_price}
+                            onChange={(e) => setOwnerData(prev => ({ ...prev, official_price: Number(e.target.value) }))}
+                            className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none"
                         />
                     </div>
 
-                    {/* Form 요청 버튼 영역 */}
+                    <div className="my-4 p-4 bg-slate-700 rounded-xl">
+                        <Slider sliders={sliderData} onChange={handleSliderChange} />
+                    </div>
+
                     <button
                         type="submit"
-                        disabled={loading}
+                        disabled={loading || !zoneInfo}
                         className="w-full py-3 mt-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition duration-200 disabled:opacity-50"
                     >
-                        {loading ? '예측 요청 중...' : '가격 예측하기'}
+                        {loading ? '계산 중...' : '2. 분담금 및 사업성 최종 계산'}
                     </button>
                 </form>
-                    {error && (
-                        //모델 예측 API 오류 발생시 Error 메시지 Div 삽입
-                        <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-xs break-all">
-                            {error}
-                        </div>
-                    )}
 
-                    {predictedPrice !== null && (
-                        //모델 예측 API 성공적으로 반환시 예측 결과 Div 삽입
-                        <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg text-center">
-                            <span className="text-sm font-medium text-green-700 block mb-1">예측 가격</span>
-                            <span className="text-2xl font-extrabold text-green-900">
-                            {predictedPrice.toLocaleString('ko-KR', { maximumFractionDigits: 0 })} 만원
-                            </span>
-                        </div>
-                    )}
+                {error && (
+                    <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-xs w-full break-all">
+                        {error}
+                    </div>
+                )}
+
+                {calcResult && (
+                    <div className="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg text-center w-full space-y-1">
+                        <span className="text-sm font-medium text-green-700 block mb-2 font-bold">🎉 계산 결과</span>
+                        <p className="text-sm text-gray-700">예상 분담금: <span className="font-extrabold text-green-900">{calcResult.contribution?.toLocaleString()} 만원</span></p>
+                        <p className="text-sm text-gray-700">비례율: <span className="font-extrabold text-green-900">{calcResult.proportional_rate}%</span></p>
+                    </div>
+                )}
             </div>
         </div>
     );

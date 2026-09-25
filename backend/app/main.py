@@ -6,6 +6,7 @@ import httpx
 import gdown
 import traceback
 
+#Docker 환경에서 상위 Dir 를 통하여 /AI/engine 디렉터리 접근을 위한 경로 추가
 current_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.abspath(os.path.join(current_dir, "../../"))
 print(root_dir)
@@ -39,17 +40,12 @@ app = FastAPI()
 
 from app.routers.ai_model import router as model_router
 from app.routers.cadastral import router as cadastral_router
-
-from app.routers.owner import router as owner_router
-from app.routers.project import router as project_router
-from app.routers.zone import router as zone_router
+from app.routers.realestate import router as realestate_router
 
 #AI 모델 라우터 등록
 app.include_router(model_router)
 app.include_router(cadastral_router)
-app.include_router(owner_router)
-app.include_router(project_router)
-app.include_router(zone_router)
+app.include_router(realestate_router)
 
 #MiddleWare 설정 (개발단계 임시 설정)
 app.add_middleware(

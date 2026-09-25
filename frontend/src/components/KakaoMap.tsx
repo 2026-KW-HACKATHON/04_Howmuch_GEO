@@ -1,24 +1,32 @@
-import React from 'react';
+import React, { useEffect, Dispatch, SetStateAction } from 'react';
 import { useKakaoMap } from '../hooks/useKakaoMap';
 import { useMapDragSelect } from '../hooks/useMapDragSelect';
 import MapLegend from './MapLegend';
 
-//컴포넌트 Props 타입 정의
+//카카오맵 Props
 interface KakaoMapProps {
     onLoadCadastralData: () => Promise<any>;
+    onSelectionChange?: (pnus: string[]) => void; // ★ 부모에게 선택된 PNU를 알려주는 콜백
 }
 
 //카카오맵 컴포넌트
-const KakaoMap: React.FC<KakaoMapProps> = ({ onLoadCadastralData }) => {
+const KakaoMap: React.FC<KakaoMapProps> = ({ onLoadCadastralData, onSelectionChange }) => {
     //지도 및 필지 관리 훅
     const { mapRef, map, selectedPnus, setSelectedPnus, featuresMapRef } = useKakaoMap(onLoadCadastralData);
     
     //드래그 선택 훅
     const { isDragSelectMode, setIsDragSelectMode } = useMapDragSelect(map, featuresMapRef, setSelectedPnus);
 
+    //selectedPnus 가 바뀔 때마다 갱신
+    useEffect(() => {
+        if (onSelectionChange) {
+            onSelectionChange(selectedPnus);
+        }
+    }, [selectedPnus, onSelectionChange]);
+
     return (
         <div className="w-full h-screen relative">
-            
+
             {/* 우측 상단 드래그 기능 토글 영역 */}
             <div className="absolute top-4 right-4 z-10 bg-white p-2 rounded shadow-md flex gap-2 items-center">
                 <button
