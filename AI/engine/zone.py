@@ -3,24 +3,68 @@
 # 여기서 합산해서 ProjectParams 에 넣을 값과 슬라이더 범위를 만든다.
 from AI.engine.schema import ParcelInfo, ZoneSummary
 
-# 용도지역 → (기준 용적률, 상한 용적률) %
-# ※ 서울시 도시계획조례 기준으로 잡은 시작값. 정비사업 상향 규정은 반영 안 됨 → 조례 확인 후 교체할 것
+# 용도지역 → (조례 기준 용적률, 법적상한용적률) %
+# 기준: 서울시 도시계획조례 제55조 제1항 / 상한: 국토계획법 시행령 제85조
+# 정비사업은 도시정비법 제54조에 따라 심의를 거쳐 법적상한용적률까지 완화 가능
+# ※ 완화분의 일정 비율(최대 75%)은 국민주택규모 임대로 공급해야 함 → calc_allocation 에서 반영
 FAR_TABLE = {
     "제1종전용주거지역": (100, 100),
-    "제2종전용주거지역": (150, 150),
+    "제2종전용주거지역": (120, 150),
     "제1종일반주거지역": (150, 200),
     "제2종일반주거지역": (200, 250),
     "제3종일반주거지역": (250, 300),
-    "준주거지역":        (400, 500),
+    "준주거지역":       (400, 500),
 }
 
 # 종전자산 합산에서 제외할 지목 (국공유지 성격)
 EXCLUDED_LAND_CATEGORY = {"도로", "구거", "하천", "공원", "제방"}
 
+# 시군구 코드(PNU 앞 5자리) → 이름
+# 우선 노원구와 인접 자치구만. 범위가 넓어지면 행정표준코드 전체를 불러오는 방식으로 바꿀 것
+SIGUNGU_NAME = {
+    "11350": "노원구",
+    "11305": "강북구",
+    "11320": "도봉구",
+    "11230": "동대문구",
+    "11260": "중랑구",
+    "11215": "광진구",
+    "11110": "종로구",
+    "11140": "중구",
+    "11380": "은평구",
+    "11410": "서대문구",
+    "11440": "마포구",
+    "11170": "용산구",
+    "11200": "성동구",
+    "11290": "성북구",
+}
+
 
 # V-World 응답의 용도지역 문자열을 FAR_TABLE 키와 맞춤 (공백/줄바꿈 제거)
 def normalize_zoning(zoning: str) -> str:
     return "".join(zoning.split()) if zoning else ""
+
+
+# PNU 앞 5자리 = 시군구 코드 (예: 1135010300100010000 → "11350")
+def sigungu_code(pnu: str) -> str:
+    return pnu[:5] if pnu and len(pnu) >= 5 else ""
+
+
+# 구역의 시군구 이름. 선택 면적 중 가장 큰 면적이 속한 시군구를 고르며, 표에 없으면 None
+def district(parcels: list[ParcelInfo]) -> str | None:
+    area_by_code: dict[str, float] = {}
+    for parcel in parcels:
+        code = sigungu_code(parcel.pnu)
+        if not code:
+            continue
+        area = parcel.area_m2 if parcel.area_m2 and parcel.area_m2 > 0 else 0.0
+        area_by_code[code] = area_by_code.get(code, 0.0) + area
+
+    if not area_by_code:
+        return None
+
+    #면적이 가장 큰 시군구를 대표로 사용 (면적을 모두 모르면 코드 순서로 결정됨)
+    top_code = max(area_by_code, key=lambda c: area_by_code[c])
+    return SIGUNGU_NAME.get(top_code)
 
 
 # 필지 목록 → 구역 집계
@@ -77,6 +121,14 @@ def build_zone_summary(parcels: list[ParcelInfo]) -> ZoneSummary:
     if len(zonings) > 1:
         warnings.append(f"용도지역이 섞여 있어 면적 가중평균을 사용했습니다: {', '.join(sorted(zonings))}")
 
+    #대표 시군구 : 공사비 등 예측 모듈에 넘길 지역
+    region = district(parcels)
+    codes = {sigungu_code(p.pnu) for p in parcels if sigungu_code(p.pnu)}
+    if len(codes) > 1:
+        warnings.append(f"여러 시군구에 걸친 구역입니다. 면적이 가장 큰 {region or '지역'} 기준으로 처리했습니다.")
+    if region is None:
+        warnings.append("PNU 로 시군구를 확인하지 못했습니다. 지역별 예측값 대신 전체 기준이 사용됩니다.")
+
     return ZoneSummary(
         site_area_m2=site_area_m2,
         far_min=far_min,
@@ -84,4 +136,5 @@ def build_zone_summary(parcels: list[ParcelInfo]) -> ZoneSummary:
         land_value_total=land_value_total,
         pnus=[p.pnu for p in parcels],
         warnings=warnings,
+        region=region,
     )

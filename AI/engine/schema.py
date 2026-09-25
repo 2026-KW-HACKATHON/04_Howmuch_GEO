@@ -51,8 +51,10 @@ class ProjectParams:
     # 비례율 고정값
     proportional_rate: float | None = None   # 비례율 고정값(%). None이면 사업 수지로 계산 (L2)
 
-    # 임대
-    rental_ratio : float            # 전체 세대 중 임대 비율 (L1/L2)
+    # 임대 (용적률과 연동. 도시정비법 제54조 + 서울시 조례 기준)
+    far_base : float                 # 조례 기준 용적률(%). 완화분을 재는 기준점, ZoneSummary.far_min (L1)
+    base_rental_ratio : float        # 기준 구간 임대 의무비율 (연면적 기준, 서울 주거지역 0.10) (L1)
+    uplift_rental_share : float      # 상향 완화 구간 중 임대로 공급하는 비율 (법정 상한 0.75) (L1)
     rental_supply_area_m2 : float    # 임대 1세대 공급 면적 (L1)
 
     # 상가 및 커뮤니티
@@ -76,8 +78,14 @@ class ProjectParams:
             raise ValueError(f"unit_mix_list 의 share 합계가 1.0 이 아닙니다: {share_sum}")
 
         #비율 범위
-        if not 0 <= self.rental_ratio <= 1:
-            raise ValueError(f"rental_ratio 는 0~1 이어야 합니다: {self.rental_ratio}")
+        if not 0 <= self.base_rental_ratio <= 1:
+            raise ValueError(f"base_rental_ratio 는 0~1 이어야 합니다: {self.base_rental_ratio}")
+        if not 0 <= self.uplift_rental_share <= 0.75:
+            raise ValueError(
+                f"uplift_rental_share 는 0~0.75 이어야 합니다(법정 상한 75%): {self.uplift_rental_share}"
+            )
+        if self.far_base <= 0:
+            raise ValueError(f"far_base 는 0보다 커야 합니다: {self.far_base}")
         if not 0 < self.housing_supply_efficiency <= 1:
             raise ValueError(
                 f"housing_supply_efficiency 는 0~1 이어야 합니다: {self.housing_supply_efficiency}"
@@ -113,6 +121,7 @@ class ZoneSummary:
 
     pnus : list[str]            # 선택된 필지 목록
     warnings : list[str] = field(default_factory=list) # 특정 조건 시 warning 문구 띄움
+    region : str | None = None  # 공사비 예측을 위한 해당 지역 이름, 예측 모듈에 넘길 지역 (L1)
 
 
 #조합원 개인 입력값

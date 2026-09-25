@@ -60,6 +60,36 @@ class Allocation:
     rental_count : int            # 임대 세대수
     sale_supply_m2 : float        # 분양 공급면적 합계
 
+def calc_allocation(params: ProjectParams, areas: Areas) -> Allocation:
+    supply_total_m2 = areas.supply_total_m2     # 주택 공급면적 합계
+
+    # 용적률 샹항에 따른 임대율 (도시정비법 제54조)
+    # 기준 구간(조례 기준 최대 용적률) -> 임대 의무비율 base_rental_ratio
+    # 완화 구간(상향 구간) -> 증가분의 uplift_rental_share 를 임대로 공급
+    base_share = min(params.far_base / params.floor_area_ratio, 1.0)  # 전체 중 기준 구간의 몫
+    base_supply_m2 = supply_total_m2 * base_share                     # 기준 구간 공급면적
+    uplift_supply_m2 = supply_total_m2 - base_supply_m2               # 완화 구간 공급면적
+
+    rent_target_m2 = (
+        base_supply_m2 * params.base_rental_ratio
+        + uplift_supply_m2 * params.uplift_rental_share
+    )                                                                  # 임대로 공급해야 할 면적
+
+    rental_count = int(rent_target_m2 / params.rental_supply_area_m2)  # 임대 세대수 (내림)
+    rent_total_m2 = rental_count * params.rental_supply_area_m2        # 내림한 세대수로 면적 재계산
+    sale_supply_m2 = supply_total_m2 - rent_total_m2                   # 분양 공급면적
+
+    # 평형별 세대수
+    unit_types = []
+    for mix in params.unit_mix_list:
+        count = int(sale_supply_m2 * mix.share / mix.supply_area_m2)
+        unit_types.append(UnitType(mix.name, mix.exclusive_area_m2, mix.supply_area_m2, count))
+
+    return Allocation(
+        unit_types,
+        rental_count,
+        sale_supply_m2
+    )
 
 # 종후 자산(총 수입)
 @dataclass
