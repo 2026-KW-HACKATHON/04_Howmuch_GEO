@@ -1,0 +1,139 @@
+# 정비사업 계약 사례를 건설공사비지수로 목표 시점까지 시점 보정 => 보정한 값들의 중앙값을 예측치로 사용
+# 공개된 자료가 적기 때문에 "지수 보정 + 중앙값"이 안정적
+# 결과는 ProjectParams.construction_cost_per_pyeong (만원/평, 평당 공사비)의 슬라이더 초기값.
+
+import csv
+from dataclasses import dataclass, field
+from pathlib import Path
+from statistics import median
+
+# Dataset 불러오기
+DATA_DIR = Path(__file__).parent / "data"
+INDEX_CSV = DATA_DIR / "cost_index.csv"     # 건설공사비지수, 2026.5월 기준 137.67 (KOSIS 공표값)
+CASES_CSV = DATA_DIR / "cost_cases.csv"     # 정비사업 계약 사례, {가격, 지역, 평당 가격} 벡터들의 행렬
+
+#슬라이더 범위를 만들 때 쓰는 폭 (예측치 대비 ±)
+SLIDER_MARGIN = 0.15
+
+
+@dataclass
+class CostCase:
+    ym: str                  # 계약 시점 "YYYY-MM"
+    name: str                # 구역/단지 이름
+    region: str              # 시군구
+    cost_per_pyeong: float   # 계약 당시 평당 공사비(만원)
+    note: str = ""           # 출처 메모
+
+
+@dataclass
+class CostPrediction:
+    cost_per_pyeong: float   # 예측 평당 공사비(만원)
+    target_ym: str           # 예측 시점
+    index_used: float        # 목표 시점 지수
+    case_count: int          # 사용한 사례 수
+    slider_min: float        # 슬라이더 최솟값
+    slider_max: float        # 슬라이더 최댓값
+    warnings: list[str] = field(default_factory=list)
+
+
+#"YYYY-MM" → 개월 수 (지수 보간용)
+def _months(ym: str) -> int:
+    year, month = ym.split("-")
+    return int(year) * 12 + int(month)
+
+
+#주석(#)과 빈 줄을 걸러내며 CSV 읽기
+def _read_csv(path: Path) -> list[dict]:
+    with open(path, encoding="utf-8") as f:
+        lines = [ln for ln in f if ln.strip() and not ln.lstrip().startswith("#")]
+    return list(csv.DictReader(lines))
+
+
+def load_index(path: Path = INDEX_CSV) -> dict[str, float]:
+    return {row["ym"]: float(row["index"]) for row in _read_csv(path)}
+
+
+def load_cases(path: Path = CASES_CSV) -> list[CostCase]:
+    return [
+        CostCase(
+            ym=row["ym"],
+            name=row["name"],
+            region=row["region"],
+            cost_per_pyeong=float(row["cost_per_pyeong"]),
+            note=row.get("note", ""),
+        )
+        for row in _read_csv(path)
+    ]
+
+
+#해당 시점의 지수. 표에 없으면 앞뒤 값으로 선형 보간, 마지막 시점 이후는 최근 상승률로 연장
+def index_at(ym: str, index: dict[str, float] | None = None) -> float:
+    index = index or load_index()
+    if ym in index:
+        return index[ym]
+
+    points = sorted(((_months(k), v) for k, v in index.items()))
+    target = _months(ym)
+
+    if target <= points[0][0]:
+        return points[0][1]
+
+    #구간 안이면 선형 보간
+    for (m0, v0), (m1, v1) in zip(points, points[1:]):
+        if m0 <= target <= m1:
+            return v0 + (v1 - v0) * (target - m0) / (m1 - m0)
+
+    #마지막 시점 이후 : 최근 24개월 상승률을 월 단위로 환산해 연장
+    (m_last, v_last) = points[-1]
+    base = next(((m, v) for m, v in points if m_last - m <= 24), points[0])
+    monthly_rate = (v_last / base[1]) ** (1 / max(m_last - base[0], 1)) - 1
+    return v_last * (1 + monthly_rate) ** (target - m_last)
+
+
+#계약 당시 공사비를 목표 시점 기준으로 보정
+def escalate(cost: float, from_ym: str, to_ym: str, index: dict[str, float] | None = None) -> float:
+    index = index or load_index()
+    return cost * index_at(to_ym, index) / index_at(from_ym, index)
+
+
+#목표 시점의 평당 공사비 예측
+def predict_cost_per_pyeong(
+    target_ym: str,
+    cases: list[CostCase] | None = None,
+    region: str | None = None,
+) -> CostPrediction:
+    index = load_index()
+    cases = cases if cases is not None else load_cases()
+    warnings: list[str] = []
+
+    #지역 우선순위 : 요청 지역 → 서울 전체 기준점
+    if region:
+        filtered = [c for c in cases if c.region == region]
+        if filtered:
+            cases = filtered
+        else:
+            warnings.append(f"{region} 사례가 없어 서울 전체 기준으로 계산했습니다.")
+            cases = [c for c in cases if c.region == "서울"] or cases
+
+    if not cases:
+        raise ValueError("공사비 사례가 하나도 없습니다. data/cost_cases.csv 를 확인하세요.")
+
+    escalated = [escalate(c.cost_per_pyeong, c.ym, target_ym, index) for c in cases]
+    predicted = median(escalated)
+
+    if len(cases) < 5:
+        warnings.append(f"사례가 {len(cases)}건뿐이라 신뢰도가 낮습니다. 사례를 더 모으세요.")
+
+    last_ym = max(index, key=_months)
+    if _months(target_ym) > _months(last_ym):
+        warnings.append(f"지수 표의 마지막 시점({last_ym}) 이후라 최근 상승률로 연장 추정했습니다.")
+
+    return CostPrediction(
+        cost_per_pyeong=round(predicted, 1),
+        target_ym=target_ym,
+        index_used=round(index_at(target_ym, index), 2),
+        case_count=len(cases),
+        slider_min=round(predicted * (1 - SLIDER_MARGIN), 1),
+        slider_max=round(predicted * (1 + SLIDER_MARGIN), 1),
+        warnings=warnings,
+    )
