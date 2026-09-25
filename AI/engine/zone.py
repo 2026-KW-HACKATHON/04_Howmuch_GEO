@@ -8,13 +8,30 @@ from AI.engine.schema import ParcelInfo, ZoneSummary
 # 정비사업은 도시정비법 제54조에 따라 심의를 거쳐 법적상한용적률까지 완화 가능
 # ※ 완화분의 일정 비율(최대 75%)은 국민주택규모 임대로 공급해야 함 → calc_allocation 에서 반영
 FAR_TABLE = {
+    #주거지역
     "제1종전용주거지역": (100, 100),
     "제2종전용주거지역": (120, 150),
     "제1종일반주거지역": (150, 200),
     "제2종일반주거지역": (200, 250),
     "제3종일반주거지역": (250, 300),
     "준주거지역":       (400, 500),
+    #상업지역 (서울도심은 조례상 더 낮지만 여기서는 일반 기준을 쓴다)
+    "중심상업지역":     (1000, 1500),
+    "일반상업지역":     (800, 1300),
+    "근린상업지역":     (600, 900),
+    "유통상업지역":     (600, 1100),
+    #공업지역
+    "전용공업지역":     (200, 300),
+    "일반공업지역":     (200, 350),
+    "준공업지역":       (400, 400),
+    #녹지지역 : 정비사업 대상이 되는 일은 드물지만, 구역 경계에 섞여 들어오는 경우가 있다
+    "보전녹지지역":     (50, 80),
+    "생산녹지지역":     (50, 100),
+    "자연녹지지역":     (50, 100),
 }
+
+# 용적률이 낮아 정비사업 대상이 되기 어려운 용도지역 (선택은 막지 않고 안내만 한다)
+LOW_DENSITY_ZONING = ("보전녹지지역", "생산녹지지역", "자연녹지지역")
 
 # 종전자산 합산에서 제외할 지목 (국공유지 성격)
 EXCLUDED_LAND_CATEGORY = {"도로", "구거", "하천", "공원", "제방"}
@@ -79,7 +96,9 @@ def build_zone_summary(parcels: list[ParcelInfo]) -> ZoneSummary:
     far_min_weighted = 0.0  # 면적 가중 기준 용적률
     far_max_weighted = 0.0  # 면적 가중 상한 용적률
     far_area_m2 = 0.0       # 용적률을 알 수 있는 필지 면적 합계
-    zonings = set()
+    area_by_zoning: dict[str, float] = {}   # 용도지역별 면적 (구성 안내용)
+    low_density_m2 = 0.0    # 녹지지역 등 저밀도 용도지역 면적
+    low_density_count = 0
 
     for parcel in parcels:
         # 면적이 없는 필지는 합산에서 제외 (토지특성 API 미조회 등)
@@ -98,11 +117,15 @@ def build_zone_summary(parcels: list[ParcelInfo]) -> ZoneSummary:
 
         # 용적률 : 용도지역별 값을 면적으로 가중평균
         zoning = normalize_zoning(parcel.zoning)
-        zonings.add(zoning)
+        area_by_zoning[zoning] = area_by_zoning.get(zoning, 0.0) + parcel.area_m2
         far_range = FAR_TABLE.get(zoning)
         if far_range is None:
             warnings.append(f"용적률 표에 없는 용도지역입니다: {parcel.zoning} ({parcel.pnu})")
             continue
+
+        if zoning in LOW_DENSITY_ZONING:
+            low_density_m2 += parcel.area_m2
+            low_density_count += 1
 
         far_min_weighted += parcel.area_m2 * far_range[0]
         far_max_weighted += parcel.area_m2 * far_range[1]
@@ -111,15 +134,31 @@ def build_zone_summary(parcels: list[ParcelInfo]) -> ZoneSummary:
     if site_area_m2 <= 0:
         raise ValueError("면적이 있는 필지가 하나도 없습니다.")
 
-    # 용도지역을 하나도 못 읽었으면 슬라이더 범위를 정할 수 없음
+    # 용도지역을 하나도 못 읽으면 오류
     if far_area_m2 <= 0:
         raise ValueError("용도지역을 확인할 수 있는 필지가 없습니다.")
 
-    far_min = far_min_weighted / far_area_m2
-    far_max = far_max_weighted / far_area_m2
+    #부동소수 오차방지 반올림
+    far_min = round(far_min_weighted / far_area_m2, 2)
+    far_max = round(far_max_weighted / far_area_m2, 2)
 
-    if len(zonings) > 1:
-        warnings.append(f"용도지역이 섞여 있어 면적 가중평균을 사용했습니다: {', '.join(sorted(zonings))}")
+    #용도지역이 섞이면 면적 가중평균 사용, 용도지역 비율 표기
+    if len(area_by_zoning) > 1:
+        parts = []
+        for zoning, area in sorted(area_by_zoning.items(), key=lambda kv: -kv[1]):
+            share = area / site_area_m2 * 100
+            #1% 미만은 0%로 보이지 않게 따로 표기한다
+            parts.append(f"{zoning or '미확인'} {share:.0f}%" if share >= 1 else f"{zoning or '미확인'} 1%미만")
+        warnings.append(
+            f"용도지역 구성: {', '.join(parts)} — 면적 가중평균으로 용적률을 계산했습니다."
+        )
+
+    #녹지지역(50%)선택시 용적률을 많이 낮추나 막지 않고 경고만 함
+    if low_density_count:
+        warnings.append(
+            f"이 중 녹지지역 {low_density_count}개 필지는 용적률이 50%라 평균을 끌어내립니다. "
+            f"정비사업 대상이 아니라면 선택에서 빼세요."
+        )
 
     #대표 시군구 : 공사비 등 예측 모듈에 넘길 지역
     region = district(parcels)
