@@ -31,6 +31,7 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
         handleSliderChange,
         handleZoneData,
         handleSubmit,
+        zoneCalculated
     } = useModelPredictForm({ onHandleZoneData, onCalculateContribution, selectedPnus });
 
     return (
@@ -91,17 +92,26 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
                         />
                     </div>
 
-                    <div className="my-4 p-4 bg-slate-700 rounded-xl">
-                        <Slider sliders={sliderData} onChange={handleSliderChange} />
-                    </div>
+                    {/* 필지 분석을 한 경우에만 렌더링 */}
+                    {zoneCalculated ? (
+                        <>
+                            <div className="my-4 p-4 bg-slate-700 rounded-xl">
+                                <Slider sliders={sliderData} onChange={handleSliderChange} />
+                            </div>
 
-                    <button
-                        type="submit"
-                        disabled={loading || !zoneInfo}
-                        className="w-full py-3 mt-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition duration-200 disabled:opacity-50"
-                    >
-                        {loading ? '계산 중...' : '2. 분담금 및 사업성 최종 계산'}
-                    </button>
+                            <button
+                                type="submit"
+                                disabled={loading || !zoneInfo}
+                                className="w-full py-3 mt-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition duration-200 disabled:opacity-50"
+                            >
+                                {loading ? '계산 중...' : '분담금 및 사업성 최종 계산'}
+                            </button>
+                        </>
+                    ) : (
+                        <div className="mt-4 p-4 bg-slate-800 rounded-lg text-center text-sm text-slate-400">
+                            구역 필지 분석을 먼저 진행해주세요.
+                        </div>
+                    )}
                 </form>
 
                 {error && (
