@@ -1,11 +1,13 @@
 from dataclasses import asdict
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from typing import List, Optional
 from app.config.engine_defaults import ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS, UNIT_MIX
 from app.utils.slider_builder import build_sliders
 from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
 from AI.engine.zone import build_zone_summary
-from AI.engine.calc import calc_contribution, calc_project, calc_area, Allocation
+from AI.engine.calc import calc_allocation, calc_area, calc_contribution, calc_project, unit_options
+from AI.predict.construction_cost import predict_cost_per_pyeong
 from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
 
 #부동산 계산식 API 라우터 설정
@@ -22,16 +24,24 @@ async def get_zone(req: ZoneRequest):
         for p in req.pnus
     ]
     
+    #공사비 예측 기준 시점 : 요청값(착공 예상 연월)이 없으면 현재 연월
+    target_ym = req.target_ym or datetime.now().strftime("%Y-%m")
+
     try:
         zone = build_zone_summary(parcels)
+        cost = predict_cost_per_pyeong(target_ym, region=zone.region)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-        
+
     return {
         "zone": asdict(zone),
-        "sliders": build_sliders(zone)
+        #far_base : 임대 의무비율의 기준점. 슬라이더가 아니라 고정값이라 따로 내려준다
+        "far_base": zone.far_min,
+        "sliders": build_sliders(zone, cost, req.household_count),
+        #cost_prediction : 공사비 슬라이더의 근거 (사례 수·지수·경고). 계산에는 쓰이지 않는다
+        "cost_prediction": asdict(cost),
     }
 
 
@@ -45,6 +55,7 @@ async def get_contribution(req: ContributionRequest):
             site_area_m2=req.site_area_m2,
             member_count=req.member_count,
             unit_mix_list=[UnitMix(**m) for m in UNIT_MIX],
+            far_base=req.far_base,          # 임대 의무비율 기준점 (ZoneSummary.far_min)
             **req.sliders,  # 프론트엔드 슬라이더 값 병합
             **ENGINE_DEFAULTS_FOR_PARAMS,
         )
@@ -55,32 +66,12 @@ async def get_contribution(req: ContributionRequest):
             appraisal_ratio=ENGINE_DEFAULTS["appraisal_ratio"],
         )
 
+        #세대수 배분은 엔진이 계산한다 (용적률에 따라 총·분양·임대 세대수가 함께 바뀜)
         areas = calc_area(params)
-        
-        unit_types = []
-        for mix in params.unit_mix_list:
-            mix_supply_total = areas.supply_total_m2 * mix.share
-            count = max(1, round(mix_supply_total / mix.supply_area_m2))
-            unit_types.append(
-                UnitType(
-                    name=mix.name,
-                    exclusive_area_m2=mix.exclusive_area_m2,
-                    supply_area_m2=mix.supply_area_m2,
-                    count=count
-                )
-            )
-
-        total_units = sum(u.count for u in unit_types)
-        rental_count = int(total_units * params.rental_ratio)
-        sale_supply_m2 = sum(u.count * u.supply_area_m2 for u in unit_types)
-
-        alloc = Allocation(
-            unit_types=unit_types,
-            rental_count=rental_count,
-            sale_supply_m2=sale_supply_m2
-        )
+        alloc = calc_allocation(params, areas)
 
         result = calc_contribution(params, alloc, owner)
+        options = unit_options(params, alloc)
 
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -89,5 +80,7 @@ async def get_contribution(req: ContributionRequest):
 
     return {
         **asdict(result),
+        #평형 선택 버튼 목록 (이름·공급면적·세대수·조합원분양가)
+        "unit_options": [asdict(o) for o in options],
         "warnings": result.project.warnings,
     }

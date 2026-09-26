@@ -197,6 +197,24 @@ def member_price(params: ProjectParams, unit_types: list[UnitType], unit_name: s
     raise ValueError(f"존재하지 않는 평형입니다: {unit_name}")
 
 
+
+# 희망 평형 선택 버튼 목록 (프론트에 내려줄 값)
+@dataclass
+class UnitOption:
+    name : str              # 평형 이름 ("84"). 그대로 OwnerInput.desired_unit 으로 돌아온다
+    supply_area_m2 : float  # 공급면적 (버튼에 표시)
+    count : int             # 배분된 세대수 (버튼에 표시)
+    member_price : float    # 조합원분양가(만원). 누르기 전에 미리 보여줄 수 있다
+
+
+def unit_options(params: ProjectParams, alloc: Allocation) -> list[UnitOption]:
+    options = []
+    for unit in alloc.unit_types:
+        price = member_price(params, alloc.unit_types, unit.name)
+        options.append(UnitOption(unit.name, unit.supply_area_m2, unit.count, price))
+
+    return options
+
 # 조합원 개인 분담금
 def calc_contribution(params: ProjectParams, alloc: Allocation, owner: OwnerInput) -> ContributionResult:
     project = calc_project(params, alloc)
