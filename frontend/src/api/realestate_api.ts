@@ -11,6 +11,7 @@ export interface ContributionRequest {
     name: string;
     site_area_m2: number;
     member_count: number;
+    far_base: number;
     sliders: {
         floor_area_ratio: number;
         member_price_ratio: number;

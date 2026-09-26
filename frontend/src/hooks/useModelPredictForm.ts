@@ -104,6 +104,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
                 site_area_m2: zoneInfo.site_area_m2,
                 member_count: Number(formData.member_count),
                 sliders: formattedSliders,
+                far_base: zoneInfo.far_min,
                 owner: {
                     desired_unit: ownerData.desired_unit,
                     official_price: Number(ownerData.official_price),

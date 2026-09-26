@@ -39,9 +39,9 @@ function App() {
 	};
 
     //필지 정보 API 호출 Handler
-    const handleCadastralData = async () => {
+    const handleCadastralData = async (geomFilter?: any) => {
         try {
-            const response = await getVWorldCadastral();
+            const response = await getVWorldCadastral(geomFilter);
             return response;
         } catch (err){
             console.log("[ handleCadastralData 오류 발생 ] : ", err);
