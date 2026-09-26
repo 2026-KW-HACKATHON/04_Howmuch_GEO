@@ -21,7 +21,7 @@ export interface VWorldFeatureCollection {
     features: VWorldFeature[];
 }
 
-//VWorld API 요청 스키마
+//VWorld API 응답 스키마
 export interface VWorldCadastralResponse {
     response: {
         service: {
@@ -31,11 +31,11 @@ export interface VWorldCadastralResponse {
             time: string;
         };
         status: string;
-        record: {
+        record?: {
             total: string;
             current: string;
         };
-        page: {
+        page?: {
             total: string;
             current: string;
             size: string;
@@ -46,8 +46,15 @@ export interface VWorldCadastralResponse {
     };
 }
 
-//지적도 데이터 API HTTP Handler 
-export const getVWorldCadastral = async (): Promise<VWorldCadastralResponse> => {
-    const response = await api.get<VWorldCadastralResponse>('/cadastral');
+//백엔드로 보낼 요청 스키마
+export interface CadastralRequest {
+    geom_filter: string;
+}
+
+//지적도 데이터 API HTTP Handler
+export const getVWorldCadastral = async (geomFilter: string): Promise<VWorldCadastralResponse> => {
+    const response = await api.post<VWorldCadastralResponse>('/api/v1/cadastral', {
+        geom_filter: geomFilter,
+    });
     return response.data;
 };

@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { useEffect, useState, useRef } from 'react';
 
-type CadastralDataLoader = () => Promise<any>;
+type CadastralDataLoader = (geomFilter: string) => Promise<any>;
 
 //KakaoMap Hook
 export const useKakaoMap = (onLoadCadastralData : CadastralDataLoader) => {
@@ -55,9 +55,9 @@ export const useKakaoMap = (onLoadCadastralData : CadastralDataLoader) => {
         const useDistrictType = (window as any).kakao.maps.MapTypeId.USE_DISTRICT;
         map.addOverlayMapTypeId(useDistrictType);
 
-        const fetchCadastralData = async () => {
+        const fetchCadastralData = async (geomFilter: any) => {
             try {
-                const response = await onLoadCadastralData();
+                const response = await onLoadCadastralData(geomFilter);
 
                 Object.values(polygonsRef.current).forEach((poly: any) => poly.setMap(null));
                 polygonsRef.current = {};
@@ -119,7 +119,14 @@ export const useKakaoMap = (onLoadCadastralData : CadastralDataLoader) => {
                 polygonsRef.current = {};
                 return;
             }
-            await fetchCadastralData();
+
+            //현재 화면 좌표 및 geomFilter 계산
+            const bounds = map.getBounds();
+            const sw = bounds.getSouthWest();
+            const ne = bounds.getNorthEast();
+            const geomFilter = `BOX(${sw.getLng()},${sw.getLat()},${ne.getLng()},${ne.getLat()})`;
+            console.log("[ handleMapMovement ] geomFilter: ", geomFilter);
+            await fetchCadastralData(geomFilter);
         };
 
         handleMapMovement();
