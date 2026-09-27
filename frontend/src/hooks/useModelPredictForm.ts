@@ -23,6 +23,9 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         official_price: 25000,
     });
 
+    //구역 분석 완료 여부
+    const [zoneCalculated, setZoneCalculated] = useState<boolean>(false);
+
     //슬라이더 변수 상태
     const [sliderData, setSliderData] = useState<SlidersState>({
         floor_area_ratio: { value: 200, min: 200, max: 250 },
@@ -73,6 +76,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
                 if (data.sliders) {
                     setSliderData(data.sliders);
                 }
+                setZoneCalculated(true);
             }
         } catch (err) {
             setError("구역 정보를 불러오는 중 오류가 발생했습니다.");
@@ -134,5 +138,6 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         handleSliderChange,
         handleZoneData,
         handleSubmit,
+        zoneCalculated,
     };
 }

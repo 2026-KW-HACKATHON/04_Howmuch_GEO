@@ -4,7 +4,6 @@ import { useState } from 'react';
 import KakaoMap from "./components/KakaoMap"
 import SideBar from './components/SideBar';
 import ModelPredictForm from './components/ModelPredictForm';
-import { predictModel } from './api/ai_model_api';
 import { getVWorldCadastral } from './api/cadastral_api';
 import { getZoneInfo, getContributionInfo } from './api/realestate_api';
 import ReCAPTCHA from 'react-google-recaptcha';
@@ -26,17 +25,6 @@ function App() {
             setIsVerified(true);
         }
     };
-
-    //AI 모델 API 호출 Handler
-    const handlePredictModel = async (requestData: any) => {
-        try {
-            const response = await predictModel(requestData);
-            return response
-        } catch (err){
-            console.log("[ handlePredictModel 오류 발생 ] : ", err);
-            throw err;
-        }
-	};
 
     //필지 정보 API 호출 Handler
     const handleCadastralData = async (geomFilter?: any) => {
