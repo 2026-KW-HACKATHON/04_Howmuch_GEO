@@ -1,8 +1,24 @@
 import { api } from './client';
+import { ParcelInfo } from '../utils/parcel';
+
+//ZoneInfo API 옵션
+//  parcels : 선택 필지의 면적·공시지가. 지적도 응답에서 뽑은 값이라 데이터 API 권한이 없어도 쓸 수 있다
+//  targetYm : 공사비·분양가 예측 기준 시점 "YYYY-MM" (착공 예상 연월). 없으면 서버가 현재 연월을 쓴다
+//  householdCount : 구역 세대수. 조합원 수 슬라이더 범위를 만드는 데 쓰인다
+export interface ZoneInfoOptions {
+    parcels?: ParcelInfo[];
+    targetYm?: string;
+    householdCount?: number;
+}
 
 //ZoneInfo API HTTP Handler
-export async function getZoneInfo(pnus: string[]): Promise<any> {
-    const response = await api.post('/api/v1/zone', { pnus });
+export async function getZoneInfo(pnus: string[], options: ZoneInfoOptions = {}): Promise<any> {
+    const response = await api.post('/api/v1/zone', {
+        pnus,
+        parcels: options.parcels,
+        target_ym: options.targetYm,
+        household_count: options.householdCount,
+    });
     return response.data;
 }
 
@@ -12,6 +28,8 @@ export interface ContributionRequest {
     site_area_m2: number;
     member_count: number;
     far_base: number;
+    household_count?: number;   //조합원 수 슬라이더 범위를 다시 계산하는 데 쓴다
+    land_value_total?: number;  //선택 구역 공시지가 총액(만원). 조합원 종전자산 추정에 쓴다
     sliders: {
         floor_area_ratio: number;
         member_price_ratio: number;
@@ -24,7 +42,7 @@ export interface ContributionRequest {
     };
     owner: {
         desired_unit: string;
-        official_price: number;
+        official_price?: number;   //직접 입력하지 않으면 서버가 공시지가로 추정한다
     };
 }
 

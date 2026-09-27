@@ -1,11 +1,12 @@
 /// <reference types="vite/client" />
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import KakaoMap from "./components/KakaoMap"
 import SideBar from './components/SideBar';
 import ModelPredictForm from './components/ModelPredictForm';
 import { getVWorldCadastral } from './api/cadastral_api';
 import { getZoneInfo, getContributionInfo } from './api/realestate_api';
+import { ParcelInfo } from './utils/parcel';
 import ReCAPTCHA from 'react-google-recaptcha';
 
 //메인
@@ -13,6 +14,18 @@ function App() {
     const [isOpen, setIsOpen] = useState<boolean>(true);
     const [isVerified, setIsVerified] = useState<boolean>(false);
     const [selectedPnus, setSelectedPnus] = useState<string[]>([]);
+
+    //선택 필지의 면적·공시지가 (지적도 응답에서 뽑은 값)
+    const [selectedParcels, setSelectedParcels] = useState<ParcelInfo[]>([]);
+
+    //선택 필지 갱신 Handler
+    //  같은 필지 목록이면 상태를 그대로 둔다. 매번 새 배열을 넣으면 렌더가 무한히 반복된다
+    const handleSelectionChange = useCallback((pnus: string[], parcels: ParcelInfo[]) => {
+        setSelectedPnus((prev) => (prev.join(',') === pnus.join(',') ? prev : pnus));
+        setSelectedParcels((prev) =>
+            prev.map((p) => p.pnu).join(',') === parcels.map((p) => p.pnu).join(',') ? prev : parcels
+        );
+    }, []);
 
     //사이드바 토글시 isOpen 값 전환
     const toggleSidebar = () => {
@@ -27,7 +40,7 @@ function App() {
     };
 
     //필지 정보 API 호출 Handler
-    const handleCadastralData = async (geomFilter?: any) => {
+    const handleCadastralData = useCallback(async (geomFilter?: any) => {
         try {
             const response = await getVWorldCadastral(geomFilter);
             return response;
@@ -35,21 +48,21 @@ function App() {
             console.log("[ handleCadastralData 오류 발생 ] : ", err);
             throw err;
         }
-    };
+    }, []);
 
     //Zone 데이터 API 호출 Handler
-    const handleZoneData = async (pnus: string[]) => {
+    const handleZoneData = useCallback(async (pnus: string[]) => {
         try {
-            const response = await getZoneInfo(pnus);
+            const response = await getZoneInfo(pnus, { parcels: selectedParcels });
             return response;
         } catch (err){
             console.log("[ handleZoneData 오류 발생 ] : ", err);
             throw err;
         }
-    };
+    }, [selectedParcels]);
 
     //Contribution 데이터 API 호출 Handler
-    const handleContributionData = async (requestData: any) => {
+    const handleContributionData = useCallback(async (requestData: any) => {
         try {
             const response = await getContributionInfo(requestData);
             return response;
@@ -57,7 +70,7 @@ function App() {
             console.log("[ handleContributionData 오류 발생 ] : ", err);
             throw err;
         }
-    };
+    }, []);
 
     return (
         <div className="relative w-screen h-screen overflow-hidden">
@@ -78,7 +91,10 @@ function App() {
                 
                     {/* 카카오 맵 영역 */}
                     <main className="absolute inset-0 w-full h-full">
-                        <KakaoMap onLoadCadastralData={handleCadastralData} onSelectionChange={(pnus) => setSelectedPnus(pnus)}/>
+                        <KakaoMap
+                            onLoadCadastralData={handleCadastralData}
+                            onSelectionChange={handleSelectionChange}
+                        />
                     </main>
 
                     {/* 사이드바 영역 */}

@@ -10,6 +10,7 @@ interface SliderProps {
 //Slider Key 별 한글 라벨 매핑 사전
 const SLIDER_LABELS: Record<string, string> = {
     floor_area_ratio: "용적률 (%)",
+    member_count: "조합원 수 (명)",
     member_price_ratio: "조합원 분양가 비율",
     other_cost_ratio: "기타 사업비 비율",
     commercial_ratio: "상가 비율",
@@ -23,21 +24,21 @@ export default function Slider({ sliders, onChange }: SliderProps) {
 
     //Slider 데이터가 없다면
     if (!sliders || Object.keys(sliders).length === 0) {
-        return <div className="p-4 text-gray-500">슬라이더 데이터가 없습니다. 구역을 먼저 조회해주세요.</div>;
+        return <div className="text-[12.5px] text-gray-500">슬라이더 데이터가 없습니다. 구역을 먼저 조회해주세요.</div>;
     }
 
     return (
-        <div className="p-6 bg-white rounded-xl shadow-md space-y-6 max-w-md mx-auto">
+        <div className="space-y-3.5">
             {Object.entries(sliders).map(([key, config]) => {
                 if (!config) return null;
                 const isFixed = config.fixed;
                 const labelText = SLIDER_LABELS[key] || key.replace(/_/g, ' ');
 
                 return (
-                <div key={key} className="space-y-1">
+                <div key={key} id={`field-${key}`} className="space-y-1 scroll-mt-4">
 
                     {/* 상단 레이블 및 현재 값 표시 */}
-                    <div className="flex justify-between text-sm font-medium text-gray-700">
+                    <div className="flex justify-between text-[12.5px] font-medium text-gray-700">
                     <span>{labelText}</span>
                     <span className="text-blue-600 font-bold">{config.value}</span>
                     </div>
@@ -57,7 +58,7 @@ export default function Slider({ sliders, onChange }: SliderProps) {
                     />
 
                     {/* 하단 Min 및 Max 범위 표시 */}
-                    <div className="flex justify-between text-xs text-gray-400">
+                    <div className="flex justify-between text-[10.5px] text-gray-400">
                     <span>최소: {config.min}</span>
                     <span>최대: {config.max}</span>
                     </div>

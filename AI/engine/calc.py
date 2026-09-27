@@ -4,6 +4,7 @@ from AI.engine.schema import(
     PER_PYEONG_TO_PER_M2,
     ProjectParams,
     ProjectResult,
+    ProjectType,
     ParcelInfo,
     ZoneSummary,
     OwnerInput,
@@ -188,6 +189,43 @@ def calc_project(params: ProjectParams, alloc: Allocation) -> ProjectResult:
         warnings=warnings,
     )
 
+
+
+# 조합원 수 슬라이더 범위
+#  기본값 = 세대수(전원 참여, 가장 보수적)
+#  하한   = 세대수 × 0.75 (조합설립 동의율 법정 최소 75%)
+#  상한   = 재건축 세대수 × 1.0 / 재개발 세대수 × 1.25
+#           (재개발은 나대지·도로지분·무허가건축물 소유자도 조합원이 된다)
+#  단, 분양 세대수를 넘으면 조합원에게 줄 집이 모자라 사업이 성립하지 않으므로 거기서 자른다.
+#  분양 세대수는 용적률에 따라 바뀌므로 이 함수는 계산할 때마다 다시 불러야 한다.
+MEMBER_COUNT_MIN_RATIO = 0.75
+MEMBER_COUNT_MAX_RATIO = {ProjectType.RECONSTRUCTION: 1.0, ProjectType.REDEVELOPMENT: 1.25}
+
+
+@dataclass
+class MemberCountRange:
+    value : int    # 기본값
+    min : int      # 하한
+    max : int      # 상한 (분양 세대수로 잘린 값)
+    capped : bool  # 분양 세대수에 걸려 잘렸는지
+
+
+def member_count_range(
+    params: ProjectParams, alloc: Allocation, household_count: int
+) -> MemberCountRange:
+    sale_count = sum(u.count for u in alloc.unit_types)
+    ratio = MEMBER_COUNT_MAX_RATIO.get(params.project_type, 1.25)
+
+    raw_max = int(household_count * ratio)
+    max_count = min(raw_max, sale_count)          # 분양 세대수를 넘을 수 없다
+    min_count = min(int(household_count * MEMBER_COUNT_MIN_RATIO), max_count)
+
+    return MemberCountRange(
+        value=min(household_count, max_count),
+        min=min_count,
+        max=max_count,
+        capped=raw_max > sale_count,
+    )
 
 # 희망 평형의 조합원분양가 (만원)
 def member_price(params: ProjectParams, unit_types: list[UnitType], unit_name: str) -> float:
