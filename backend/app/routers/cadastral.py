@@ -23,6 +23,18 @@ async def get_vworld_cadastral(request: CadastralRequest):
 
     geom_filter = request.geom_filter
 
+    #WFS 엔드포인트는 geomFilter(= /req/data API 파라미터) 를 무시하고 bbox 를 받는다
+    #  무시되면 화면 범위와 무관하게 전국 앞쪽 필지가 와서 지도에 아무것도 안 보인다
+    #  프론트는 BOX(경도,위도,경도,위도) 로 보내지만 bbox 는 위도,경도 순서다
+    try:
+        min_lng, min_lat, max_lng, max_lat = (
+            value.strip() for value in geom_filter[geom_filter.index("(") + 1: geom_filter.rindex(")")].split(",")
+        )
+        bbox = f"{min_lat},{min_lng},{max_lat},{max_lng},EPSG:4326"
+    except (ValueError, IndexError):
+        print(f"[Warning] get_vworld_cadastral geom_filter 형식 오류: {geom_filter}")
+        raise HTTPException(status_code=400, detail="geom_filter 는 BOX(경도,위도,경도,위도) 형식이어야 합니다.")
+
     params = {
         "service": "data",
         "version": "2.0.0",
@@ -33,8 +45,8 @@ async def get_vworld_cadastral(request: CadastralRequest):
         "domain": domain,
         "output": "json",
         "srsName": "EPSG:4326",
-        "geomFilter": geom_filter,
-        "size": "1000",
+        "bbox": bbox,
+        "maxFeatures": "1000",
     }
 
     #V-World API 호출 및 응답 처리
