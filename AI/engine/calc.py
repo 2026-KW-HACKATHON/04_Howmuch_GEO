@@ -151,7 +151,6 @@ def calc_project(params: ProjectParams, alloc: Allocation) -> ProjectResult:
     if params.proportional_rate is not None:
         proportional_rate = params.proportional_rate
         rate_fixed = True
-        warnings.append("비례율 고정값 사용 : 사업비·분양가 변화가 반영되지 않습니다.")
     else:
         proportional_rate = (
             (revenues.total_post_asset - costs.all_cost) / total_prior_asset * 100
