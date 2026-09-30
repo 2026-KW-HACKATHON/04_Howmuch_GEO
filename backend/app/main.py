@@ -30,11 +30,13 @@ if not os.path.exists(CADASTRAL_DATA_PATH):
 app = FastAPI()
 
 from app.routers.cadastral import router as cadastral_router
-from app.routers.realestate import router as realestate_router
+from app.routers.zone import router as zone_router
+from app.routers.contribution import router as contribution_router
 
 #AI 모델 라우터 등록
 app.include_router(cadastral_router)
-app.include_router(realestate_router)
+app.include_router(zone_router)
+app.include_router(contribution_router)
 
 #MiddleWare 설정 (개발단계 임시 설정)
 app.add_middleware(

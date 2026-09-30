@@ -1,4 +1,16 @@
 services:
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   # 백엔드
   backend:
     build:
@@ -12,12 +24,16 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
+      - REDIS_URL=redis://host.docker.internal:6379/0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     dns:
       - 8.8.8.8
       - 1.1.1.1
-    extra_hosts:
-      - "api.vworld.kr:211.188.33.95"
-  
+    depends_on:
+      redis:
+        condition: service_healthy
+
   # 프론트엔드
   frontend:
     build:
@@ -36,3 +52,6 @@ services:
       - 1.1.1.1
     depends_on:
       - backend
+
+volumes:
+  redis_data:
