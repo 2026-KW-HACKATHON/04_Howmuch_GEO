@@ -10,22 +10,24 @@ router = APIRouter(
     tags=["Cadastral"]
 )
 
-#지적도 데이터 API 라우터
-@router.post("/cadastral/")
+@router.post("/cadastral")
 async def get_vworld_cadastral(request: CadastralRequest):
     api_key = os.getenv("VWORLD_API_KEY")
     domain = os.getenv("DOMAIN")
-    vworld_wfs_url = os.getenv("VWORLD_WFS_URL")
+    proxy_url = os.getenv("PROXY_URL")
 
-    if not api_key or not domain or not vworld_wfs_url:
-        print("[Warning] V-World 환경 변수가 부족하여 Mock 데이터를 반환합니다.")
+    # 1. 환경 변수 유효성 검사 및 로깅 보완
+    if not api_key or not domain or not proxy_url:
+        print(f"[Warning] 환경 변수 누락 -> API_KEY: {bool(api_key)}, DOMAIN: {bool(domain)}, PROXY_URL: {bool(proxy_url)}")
         return MOCK_CADASTRAL_RESPONSE
+
+    # 2. ⚠️ URL 파라미터 중복 충돌 방지 처리
+    # httpx.get() 호출 시 params 인자를 따로 전달하므로, 베이스 URL에는 절대로 쿼리 스트링(?나 경로)이 중복 조합되면 안 됩니다.
+    base_proxy = proxy_url.rstrip("/")
+    vworld_wfs_url = f"{base_proxy}/req/wfs" 
 
     geom_filter = request.geom_filter
 
-    #WFS 엔드포인트는 geomFilter(= /req/data API 파라미터) 를 무시하고 bbox 를 받는다
-    #  무시되면 화면 범위와 무관하게 전국 앞쪽 필지가 와서 지도에 아무것도 안 보인다
-    #  프론트는 BOX(경도,위도,경도,위도) 로 보내지만 bbox 는 위도,경도 순서다
     try:
         min_lng, min_lat, max_lng, max_lat = (
             value.strip() for value in geom_filter[geom_filter.index("(") + 1: geom_filter.rindex(")")].split(",")
@@ -35,6 +37,7 @@ async def get_vworld_cadastral(request: CadastralRequest):
         print(f"[Warning] get_vworld_cadastral geom_filter 형식 오류: {geom_filter}")
         raise HTTPException(status_code=400, detail="geom_filter 는 BOX(경도,위도,경도,위도) 형식이어야 합니다.")
 
+    # 3. 브이월드 규격에 맞는 파라미터 정의
     params = {
         "service": "data",
         "version": "2.0.0",
@@ -49,16 +52,26 @@ async def get_vworld_cadastral(request: CadastralRequest):
         "maxFeatures": "1000",
     }
 
-    #V-World API 호출 및 응답 처리
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(verify=False) as client:
         try:
+            # 최종 호출 로그 확인용 출력
+            print(f"[Info] 호출 URL: {vworld_wfs_url}")
+            print(f"[Info] 호출 파라미터: {params}")
+            
+            # ⚠️ 프록시는 SSL이 없으므로 httpx가 내부 검증 절차를 거치지 않도록 verify=False를 추가하는 것이 안전합니다.
             response = await client.get(vworld_wfs_url, params=params, timeout=10.0)
             
             if response.status_code != 200:
-                print(f"[Warning] get_vworld_cadastral V-World API 통신 실패: {str(response.status_code)}")
+                print(f"[Warning] 프록시 통신 실패 (상태 코드: {response.status_code})")
+                print(f"[Detail] 응답 내용: {response.text}")
                 return MOCK_CADASTRAL_RESPONSE
             
             api_data = response.json()
+
+            # 4. 브이월드 자체 인증 실패 레이아웃 잡아내기
+            if "response" in api_data and api_data["response"].get("status") == "NOT_FOUND":
+                print(f"[Warning] 브이월드 인증 거부 또는 데이터 없음. 응답: {api_data}")
+                return MOCK_CADASTRAL_RESPONSE
 
             feature_collection = (
                 api_data.get("response", {})
@@ -82,7 +95,5 @@ async def get_vworld_cadastral(request: CadastralRequest):
             }
             
         except (httpx.RequestError, httpx.TimeoutException) as err:
-
-            #V-World API 통신 실패 시 Mock 데이터 반환
-            print(f"[Warning] get_vworld_cadastral 통신 실패: {str(err)}")
+            print(f"[Warning] 백엔드 -> 프록시 네트워크 통신 오류: {str(err)}")
             return MOCK_CADASTRAL_RESPONSE

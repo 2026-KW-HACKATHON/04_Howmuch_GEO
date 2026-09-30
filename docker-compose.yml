@@ -1,4 +1,24 @@
 services:
+  db:
+    image: postgres:15-alpine
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data # Redis 데이터 영속화
+
   # 백엔드
   backend:
     build:
@@ -15,9 +35,7 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1
-    extra_hosts:
-      - "api.vworld.kr:211.188.33.95"
-  
+
   # 프론트엔드
   frontend:
     build:
@@ -36,3 +54,7 @@ services:
       - 1.1.1.1
     depends_on:
       - backend
+
+volumes:
+  pgdata:
+  redis_data:
