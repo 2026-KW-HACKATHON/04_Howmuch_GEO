@@ -1,28 +1,24 @@
 from fastapi import APIRouter, HTTPException
 import httpx
 import os
+import traceback
 from app.routers.mock_data import MOCK_CADASTRAL_RESPONSE
 from app.schemas.cadastral.cadastral_request import CadastralRequest
+from urllib.parse import urlencode
 
-#지적도 라우터 설정
 router = APIRouter(
     prefix="/api/v1",
     tags=["Cadastral Engine"]
 )
 
-#필지 반환 API
 @router.post("/cadastral")
 async def get_vworld_cadastral(request: CadastralRequest):
     api_key = os.getenv("VWORLD_API_KEY")
-    domain = os.getenv("DOMAIN")
-    VWORLD_WFS_URL = os.getenv("VWORLD_WFS_URL")
+    VWORLD_DOMAIN = os.getenv("VWORLD_DOMAIN")
+    PROXY_URL = os.getenv("PROXY_URL")
 
-    #환경 변수 유효성 검사 및 로깅 보완
-    if not api_key or not domain or not VWORLD_WFS_URL:
-        print(f"[Warning] 환경 변수 누락 -> API_KEY: {bool(api_key)}, DOMAIN: {bool(domain)}, VWORLD_WFS_URL: {bool(VWORLD_WFS_URL)}")
+    if not api_key or not VWORLD_DOMAIN:
         return MOCK_CADASTRAL_RESPONSE
-
-    #URL 파라미터 중복 충돌 방지 처리
 
     geom_filter = request.geom_filter
 
@@ -30,42 +26,36 @@ async def get_vworld_cadastral(request: CadastralRequest):
         min_lng, min_lat, max_lng, max_lat = (
             value.strip() for value in geom_filter[geom_filter.index("(") + 1: geom_filter.rindex(")")].split(",")
         )
-        bbox = f"{min_lat},{min_lng},{max_lat},{max_lng},EPSG:4326"
-    except (ValueError, IndexError):
-        print(f"[Warning] get_vworld_cadastral geom_filter 형식 오류: {geom_filter}")
+        box_str = f"BOX({min_lng},{min_lat},{max_lng},{max_lat})"
+    except (ValueError, IndexError) as e:
         raise HTTPException(status_code=400, detail="geom_filter 는 BOX(경도,위도,경도,위도) 형식이어야 합니다.")
 
-    #브이월드 규격에 맞는 파라미터 정의
-    params = {
+    query_params = {
         "service": "data",
-        "version": "2.0.0",
         "request": "GetFeature",
         "data": "lp_pa_cbnd_bubun",
-        "typeName": "lp_pa_cbnd_bubun",
         "key": api_key,
-        "domain": domain,
-        "output": "json",
-        "srsName": "EPSG:4326",
-        "bbox": bbox,
-        "maxFeatures": "1000",
+        "domain": VWORLD_DOMAIN,
+        "format": "json",
+        "geomFilter": box_str,
+        "epsg": "4326",
+        "size": 1000
     }
-
+    
+    # 딕셔너리를 안전한 URL 인코딩 쿼리 스트링으로 변환
+    target_call_url = f"{PROXY_URL}?{urlencode(query_params)}"
+    
     async with httpx.AsyncClient(verify=False) as client:
         try:
-            print(f"[Info] 호출 URL: {VWORLD_WFS_URL}")
-            print(f"[Info] 호출 파라미터: {params}")
-
-            response = await client.get(VWORLD_WFS_URL, params=params, timeout=5.0)
+            # 완성된 전체 URL로 직접 GET 요청 (타임아웃 15초로 넉넉하게)
+            response = await client.get(target_call_url, timeout=15.0)
             
             if response.status_code != 200:
-                print(f"[Warning] 통신 실패 (상태 코드: {response.status_code})")
-                print(f"[Detail] 응답 내용: {response.text}")
                 return MOCK_CADASTRAL_RESPONSE
             
             api_data = response.json()
 
             if "response" in api_data and api_data["response"].get("status") == "NOT_FOUND":
-                print(f"[Warning] 브이월드 인증 거부 또는 데이터 없음. 응답: {api_data}")
                 return MOCK_CADASTRAL_RESPONSE
 
             feature_collection = (
@@ -89,6 +79,9 @@ async def get_vworld_cadastral(request: CadastralRequest):
                 }
             }
             
-        except (httpx.RequestError, httpx.TimeoutException) as err:
-            print(f"[Warning] 백엔드 -> 프록시 네트워크 통신 오류: {str(err)}")
+        except Exception as err:
+            print(f"[CRITICAL] 통신 또는 처리 중 예외 발생!")
+            print(f"[Error Type]: {type(err).__name__}")
+            print(f"[Error Message]: {str(err)}")
+            traceback.print_exc()
             return MOCK_CADASTRAL_RESPONSE

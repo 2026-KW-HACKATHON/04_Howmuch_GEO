@@ -16,6 +16,8 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    env_file:
+      - ./backend/.env
     ports:
       - "8000:8000"
     volumes:
@@ -24,16 +26,14 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
-      - REDIS_URL=redis://host.docker.internal:6379/0
+    network_mode: "host"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+      - "how-much-geo-test.vercel.app:216.198.79.67"
     dns:
       - 8.8.8.8
-      - 1.1.1.1
-    depends_on:
-      redis:
-        condition: service_healthy
-
+      - 8.8.4.4
+      
   # 프론트엔드
   frontend:
     build:
