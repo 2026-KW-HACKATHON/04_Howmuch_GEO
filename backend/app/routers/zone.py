@@ -50,16 +50,14 @@ VWORLD_CALL_GAP = 0.05
 #실거래 조회 기간(개월). 분양가 시점 보정에 쓰는 월 상승률을 여기서 구한다
 TRADE_MONTHS = 12
 
-#실거래 캐시. 시군구·기간이 같으면 다시 부르지 않는다 (월별로 1회씩 호출해야 해서 느리다)
-_TRADE_CACHE: dict[tuple[str, str], list] = {}
-
 #Redis 를 통한 Trade 캐시 불러오기
-def get_cached_trades(lawd_cd: str, target_ym: str) -> Optional[list]:
+async def get_cached_trades(lawd_cd: str, target_ym: str) -> Optional[list]:
     if not redis_client:
         return None
     cache_key = f"trade:{lawd_cd}:{target_ym}"
     try:
-        val = redis_client.get(cache_key)
+        val = await redis_client.get(cache_key)
+        print("[ Log ] : Get from cache")
         if val:
             return json.loads(val)
     except Exception as e:
@@ -67,21 +65,22 @@ def get_cached_trades(lawd_cd: str, target_ym: str) -> Optional[list]:
     return None
 
 #Redis 를 통한 Trade 캐시 저장
-def set_cached_trades(lawd_cd: str, target_ym: str, trades: list):
+async def set_cached_trades(lawd_cd: str, target_ym: str, trades: list):
     if not redis_client:
         return
     cache_key = f"trade:{lawd_cd}:{target_ym}"
     try:
-        redis_client.setex(cache_key, 86400, json.dumps(trades))
+        await redis_client.setex(cache_key, 86400, json.dumps(trades))
+        print("[ Log ] : Save cache")
     except Exception as e:
         print(f"[Warning] Redis Write Error (Trade): {e}")
 
 #분양가 시점 보정용 실거래 목록
-def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
+async def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
     if not os.getenv("MOLIT_API_KEY"):
         return []
 
-    cached = get_cached_trades(lawd_cd, target_ym)
+    cached = await get_cached_trades(lawd_cd, target_ym)
     if cached is not None:
         return cached
 
@@ -102,12 +101,13 @@ def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
     return trades
 
 #Redis 를 통한 Land 캐시 불러오기
-def get_cached_land(pnu: str) -> Optional[dict]:
+async def get_cached_land(pnu: str) -> Optional[dict]:
     if not redis_client:
         return None
     cache_key = f"land:{pnu}"
     try:
-        val = redis_client.get(cache_key)
+        val = await redis_client.get(cache_key)
+        print("[ Log ] : Get from cache")
         if val:
             return json.loads(val)
     except Exception as e:
@@ -115,17 +115,18 @@ def get_cached_land(pnu: str) -> Optional[dict]:
     return None
 
 #Redis 를 통한 Land 캐시 저장하기
-def set_cached_land(pnu: str, data: dict):
+async def set_cached_land(pnu: str, data: dict):
     if not redis_client:
         return
     cache_key = f"land:{pnu}"
     try:
-        redis_client.setex(cache_key, 604800, json.dumps(data))
+        await redis_client.setex(cache_key, 604800, json.dumps(data))
+        print("[ Log ] : Save cache")
     except Exception as e:
         print(f"[Warning] Redis Write Error (Land): {e}")
 
 #부동산 계산식 API 라우터
-def fetch_land_price_per_m2(pnu: str) -> int:
+async def fetch_land_price_per_m2(pnu: str) -> int:
     try:
         url = "https://api.vworld.kr/ned/data/getIndvdLandPrice"
 
@@ -147,7 +148,7 @@ def fetch_land_price_per_m2(pnu: str) -> int:
         return 0
 
 #부동산 계산식 API 라우터
-def fetch_land_characteristics(pnu: str) -> dict:
+async def fetch_land_characteristics(pnu: str) -> dict:
     default_data = {
         "area_m2": 300.0,
         "zoning": "제2종일반주거지역",
@@ -156,7 +157,7 @@ def fetch_land_characteristics(pnu: str) -> dict:
         "fallback": True,        #조회 실패 표시. 용도지역이 가정값이라 용적률이 왜곡된다
     }
 
-    cached = get_cached_land(pnu)
+    cached = await get_cached_land(pnu)
     if cached:
         return cached
     
@@ -217,7 +218,7 @@ async def get_zone(req: ZoneRequest):
 
         for p in req.pnus:
             hint = hints.get(p)
-            land_data = fetch_land_characteristics(p)
+            land_data = await fetch_land_characteristics(p)
 
             #용도지역 조회가 실패하면 제2종일반주거로 가정된다. 용적률이 왜곡되므로 알려준다
             if land_data.get("fallback"):
@@ -229,7 +230,7 @@ async def get_zone(req: ZoneRequest):
             if hint and hint.land_price_per_m2:
                 price = hint.land_price_per_m2
             else:
-                price = land_data["land_price_per_m2"] or fetch_land_price_per_m2(p)
+                price = land_data["land_price_per_m2"] or await fetch_land_price_per_m2(p)
 
             parcels.append(
                 ParcelInfo(
@@ -270,69 +271,4 @@ async def get_zone(req: ZoneRequest):
         "sliders": build_sliders(zone, cost, req.household_count, sale=sale),
         "cost_prediction": asdict(cost),
         "sale_prediction": asdict(sale),
-    }
-
-
-#슬라이더 및 추가 변수들로 계산하는 API
-@router.post(
-    "/contribution",
-    summary="조합원 개인 분담금 및 사업성 계산")
-async def get_contribution(req: ContributionRequest):
-    try:
-        params = ProjectParams(
-            name=req.name,
-            project_type=ProjectType.REDEVELOPMENT,
-            site_area_m2=req.site_area_m2,
-            member_count=req.member_count,
-            unit_mix_list=[UnitMix(**m) for m in UNIT_MIX],
-            far_base=req.far_base,
-            **req.sliders,
-            **ENGINE_DEFAULTS_FOR_PARAMS,
-        )
-        
-        #조합원 종전자산 : 공시가격을 직접 받지 않으면 선택 구역 공시지가의 1인분으로 추정한다
-        if req.owner.official_price is not None:
-            prior_asset_kwargs = {"official_price": req.owner.official_price}
-        elif req.land_value_total:
-            prior_asset_kwargs = {"official_price": req.land_value_total / max(req.member_count, 1)}
-        else:
-            prior_asset_kwargs = {"appraisal_value": ENGINE_DEFAULTS["avg_prior_asset"]}
-
-        owner = OwnerInput(
-            desired_unit=req.owner.desired_unit,
-            appraisal_ratio=ENGINE_DEFAULTS["appraisal_ratio"],
-            **prior_asset_kwargs,
-        )
-
-        areas = calc_area(params)
-        alloc = calc_allocation(params, areas)
-        result = calc_contribution(params, alloc, owner)
-        options = unit_options(params, alloc)
-
-        #조합원 수 슬라이더 범위는 용적률에 따라 바뀐다 (분양 세대수를 넘을 수 없음)
-        if req.household_count:
-            member_range = member_count_range(params, alloc, req.household_count)
-        else:
-            #세대수 자료가 없으면 동의율 기준을 쓸 수 없다. 분양 세대수 안에서 탐색하도록 넓게 준다
-            sale_count = sum(u.count for u in alloc.unit_types)
-            low = max(1, int(sale_count * MEMBER_COUNT_UNKNOWN_MIN_RATIO))
-            member_range = MemberCountRange(
-                value=min(max(req.member_count, low), sale_count),
-                min=low,
-                max=sale_count,
-                capped=True,
-            )
-
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        print(f"[Warning] 조합원 개인 분담금 및 사업성 계산 중 오류 발생: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"[Warning] 서버 내부 오류: {str(e)}")
-
-    return {
-        **asdict(result),
-        "unit_options": [asdict(o) for o in options],
-        #슬라이더를 다시 그릴 수 있게 갱신된 조합원 수 범위를 함께 내려준다
-        "member_count_range": asdict(member_range),
-        "warnings": result.project.warnings,
     }
