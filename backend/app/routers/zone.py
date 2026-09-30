@@ -28,7 +28,8 @@ router = APIRouter(
 #환경 변수 로드
 load_dotenv()
 VWORLD_API_KEY = os.getenv("VWORLD_API_KEY")
-DOMAIN = os.getenv("DOMAIN")
+VWORLD_DOMAIN = os.getenv("VWORLD_DOMAIN")
+PROXY_URL = os.getenv("PROXY_URL")
 
 #V-World 데이터 API 세션
 VWORLD_SESSION = requests.Session()
@@ -128,7 +129,7 @@ async def set_cached_land(pnu: str, data: dict):
 #부동산 계산식 API 라우터
 async def fetch_land_price_per_m2(pnu: str) -> int:
     try:
-        url = "https://api.vworld.kr/ned/data/getIndvdLandPrice"
+        url = PROXY_URL + "/ned/data/getIndvdLandPrice"
 
         params = {
             "key": VWORLD_API_KEY,
@@ -163,12 +164,12 @@ async def fetch_land_characteristics(pnu: str) -> dict:
     
     try:
         time.sleep(VWORLD_CALL_GAP)
-        url = "https://api.vworld.kr/ned/data/getLandCharacteristics"
+        url = PROXY_URL + "/ned/data/getLandCharacteristics"
         params = {
             "key": VWORLD_API_KEY,
             "pnu": pnu,
             "format": "json",
-            "domain": DOMAIN
+            "domain": VWORLD_DOMAIN
         }
         response = VWORLD_SESSION.get(url, params=params, timeout=5)
         data = response.json()
@@ -256,7 +257,7 @@ async def get_zone(req: ZoneRequest):
 
         #분양가 : 인근 분양 사례 + 실거래 추세 보정 (PNU 앞 5자리 = 시군구 코드)
         lawd_cd = zone.pnus[0][:5] if zone.pnus else ""
-        trades = fetch_recent_trades(lawd_cd, target_ym) if lawd_cd else []
+        trades = await fetch_recent_trades(lawd_cd, target_ym) if lawd_cd else []
         sale = predict_sale_price_per_m2(target_ym, trades=trades, region=zone.region)
 
     except ValueError as e:

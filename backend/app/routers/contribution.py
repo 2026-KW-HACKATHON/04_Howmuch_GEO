@@ -27,7 +27,7 @@ router = APIRouter(
 #환경 변수 로드
 load_dotenv()
 VWORLD_API_KEY = os.getenv("VWORLD_API_KEY")
-DOMAIN = os.getenv("DOMAIN")
+VWORLD_DOMAIN = os.getenv("VWORLD_DOMAIN")
 
 #V-World 데이터 API 세션
 VWORLD_SESSION = requests.Session()
