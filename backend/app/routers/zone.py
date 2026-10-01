@@ -8,9 +8,10 @@ from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, Proje
 from AI.engine.zone import build_zone_summary
 from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
 from AI.predict.construction_cost import predict_cost_per_pyeong
-from AI.predict.sale_price import fetch_trades, predict_sale_price_per_m2
+from AI.predict.sale_price import Trade, fetch_trades, predict_sale_price_per_m2
 from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
 from dotenv import load_dotenv
+from dataclasses import is_dataclass, asdict
 import os
 import requests
 import time
@@ -18,6 +19,11 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from app.core.redis import redis_client
 import json
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+#스레드풀 생성
+executor = ThreadPoolExecutor(max_workers=10)
 
 #부동산 계산식 API 라우터 설정
 router = APIRouter(
@@ -45,34 +51,50 @@ VWORLD_SESSION.mount(
     ),
 )
 
-#호출 간격(초). 쉬지 않고 던지면 서버가 연결을 끊어 재시도 대기가 붙고 오히려 느려진다
+#호출 간격(초)
 VWORLD_CALL_GAP = 0.05
 
-#실거래 조회 기간(개월). 분양가 시점 보정에 쓰는 월 상승률을 여기서 구한다
+#실거래 조회 기간(개월)
 TRADE_MONTHS = 12
 
 #Redis 를 통한 Trade 캐시 불러오기
 async def get_cached_trades(lawd_cd: str, target_ym: str) -> Optional[list]:
     if not redis_client:
         return None
-    cache_key = f"trade:{lawd_cd}:{target_ym}"
     try:
-        val = await redis_client.get(cache_key)
-        print("[ Log ] : Get from cache")
-        if val:
-            return json.loads(val)
+        data = await redis_client.get(f"trades:{lawd_cd}:{target_ym}")
+        if data:
+            raw_list = json.loads(data)
+            return [Trade(**item) if isinstance(item, dict) else item for item in raw_list]
+        return None
     except Exception as e:
         print(f"[Warning] Redis Read Error (Trade): {e}")
-    return None
+        return None
 
 #Redis 를 통한 Trade 캐시 저장
 async def set_cached_trades(lawd_cd: str, target_ym: str, trades: list):
-    if not redis_client:
+    if not redis_client or not trades:
         return
-    cache_key = f"trade:{lawd_cd}:{target_ym}"
     try:
-        await redis_client.setex(cache_key, 86400, json.dumps(trades))
-        print("[ Log ] : Save cache")
+        # Pydantic v2 / Pydantic v1 / Dataclass / 일반 dict 모두 대응하는 직렬화
+        trades_dict = []
+        for trade in trades:
+            if hasattr(trade, "model_dump"):  # Pydantic v2
+                trades_dict.append(trade.model_dump())
+            elif hasattr(trade, "dict"):  # Pydantic v1
+                trades_dict.append(trade.dict())
+            elif is_dataclass(trade):  # @dataclass
+                trades_dict.append(asdict(trade))
+            elif isinstance(trade, dict):  # 이미 dict인 경우
+                trades_dict.append(trade)
+            elif hasattr(trade, "__dict__"):  # 일반 Custom Class
+                trades_dict.append(trade.__dict__)
+            else:
+                trades_dict.append(str(trade))
+
+        serialized_data = json.dumps(trades_dict, ensure_ascii=False)
+        print("[ Log ] : Save cache (Trade)")
+        await redis_client.set(f"trades:{lawd_cd}:{target_ym}", serialized_data, ex=86400)
     except Exception as e:
         print(f"[Warning] Redis Write Error (Trade): {e}")
 
@@ -85,7 +107,7 @@ async def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
     if cached is not None:
         return cached
 
-    #target_ym 이전 TRADE_MONTHS 개월
+    # target_ym 이전 TRADE_MONTHS 개월
     year, month = (int(v) for v in target_ym.split("-"))
     ym_list = []
     for step in range(TRADE_MONTHS):
@@ -93,12 +115,14 @@ async def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
         ym_list.append(f"{total // 12}-{total % 12 + 1:02d}")
 
     try:
-        trades = fetch_trades(lawd_cd, ym_list)
+        loop = asyncio.get_event_loop()
+        trades = await loop.run_in_executor(executor, fetch_trades, lawd_cd, ym_list)
     except Exception as e:
         print(f"[Warning] 실거래가 조회 실패 {lawd_cd}: {e}")
         return []
 
-    set_cached_trades(lawd_cd, target_ym, trades)
+    if trades:
+        await set_cached_trades(lawd_cd, target_ym, trades)
     return trades
 
 #Redis 를 통한 Land 캐시 불러오기
@@ -108,8 +132,8 @@ async def get_cached_land(pnu: str) -> Optional[dict]:
     cache_key = f"land:{pnu}"
     try:
         val = await redis_client.get(cache_key)
-        print("[ Log ] : Get from cache")
         if val:
+            print("[ Log ] : Get from cache (Land)")
             return json.loads(val)
     except Exception as e:
         print(f"[Warning] Redis Read Error (Land): {e}")
@@ -117,12 +141,14 @@ async def get_cached_land(pnu: str) -> Optional[dict]:
 
 #Redis 를 통한 Land 캐시 저장하기
 async def set_cached_land(pnu: str, data: dict):
-    if not redis_client:
+    if not redis_client or not data:
         return
     cache_key = f"land:{pnu}"
     try:
-        await redis_client.setex(cache_key, 604800, json.dumps(data))
-        print("[ Log ] : Save cache")
+        # Land 객체 내 Pydantic/Dataclass가 포함된 경우 대비 ensure_ascii=False 처리
+        serialized_data = json.dumps(data, ensure_ascii=False, default=str)
+        await redis_client.setex(cache_key, 604800, serialized_data)
+        print("[ Log ] : Save cache (Land)")
     except Exception as e:
         print(f"[Warning] Redis Write Error (Land): {e}")
 
@@ -143,6 +169,7 @@ async def fetch_land_price_per_m2(pnu: str) -> int:
         price_info = data.get("indvdLandPrices", {}).get("field", {})
         price = price_info.get("pblntfPclnd")
         
+        print(f"[ Log ] : Land Price for PNU {pnu} is {price}")
         return int(price) if price else 0
     except Exception as e:
         print(f"[Warning] get_land_price_per_m2 오류 (Price): {e}")
@@ -196,7 +223,7 @@ async def fetch_land_characteristics(pnu: str) -> dict:
             "land_price_per_m2": price,
             "fallback": False,
         }
-        set_cached_land(pnu, result)
+        await set_cached_land(pnu, result)
         return result
         
     except Exception as e:
@@ -257,6 +284,7 @@ async def get_zone(req: ZoneRequest):
 
         #분양가 : 인근 분양 사례 + 실거래 추세 보정 (PNU 앞 5자리 = 시군구 코드)
         lawd_cd = zone.pnus[0][:5] if zone.pnus else ""
+        print(f"[Check] lawd_cd 값: '{lawd_cd}' (Type: {type(lawd_cd)})")
         trades = await fetch_recent_trades(lawd_cd, target_ym) if lawd_cd else []
         sale = predict_sale_price_per_m2(target_ym, trades=trades, region=zone.region)
 
