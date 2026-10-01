@@ -100,7 +100,7 @@ export default function ContributionPanel({
                         className="-mx-1.5 flex w-[calc(100%+12px)] items-baseline justify-between gap-1.5 rounded px-1.5 py-1 text-left hover:bg-blue-50"
                     >
                         <span className="whitespace-nowrap text-[12.5px] text-gray-500">{metric.label}</span>
-                        <span className="text-[12.5px] font-semibold tabular-nums text-gray-900">{metric.value}</span>
+                        <span className="whitespace-nowrap text-[12.5px] font-semibold tabular-nums text-gray-900">{metric.value}</span>
                     </button>
                 ))}
             </div>
