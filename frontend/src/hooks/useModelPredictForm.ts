@@ -49,12 +49,14 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
     const [sliderData, setSliderData] = useState<SlidersState>({
         floor_area_ratio: { value: 200, min: 200, max: 250 },
         member_count: MEMBER_COUNT_FALLBACK,
-        member_price_ratio: { value: 0.8, min: 0.7, max: 0.9 },
+        member_price_ratio: { value: 0.8, min: 0.75, max: 0.95 },
         other_cost_ratio: { value: 0.35, min: 0.25, max: 0.45 },
+        parking_per_household: { value: 1.3, min: 1.0, max: 2.0 },
         commercial_ratio: { value: 0.03, min: 0.0, max: 0.2 },
         construction_cost_per_pyeong: { value: 850, min: 700, max: 1000 },
         general_price_per_m2: { value: 998.25, min: 700, max: 1300 },
-        proportional_rate: { value: 100, min: 80, max: 120, fixed: true },
+        rental_floor_band: { value: '11~20층', options: ['5층 이하', '6~10층', '11~20층', '21층 이상'] },
+        project_period_years: { value: 13, options: [11, 13, 16, 18] },
     });
 
     //조합원 수 범위 (/contribution 응답). 슬라이더 범위를 맞추는 데 쓴다
@@ -79,7 +81,8 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
     };
 
     //슬라이더 값 변경 Handler
-    const handleSliderChange = (key: string, newValue: number) => {
+    //  노드 슬라이더(임대동 층수)는 문자열 값을 쓰므로 number 로 좁히면 안 된다
+    const handleSliderChange = (key: string, newValue: number | string) => {
         setSliderData((prev: any) => ({
             ...prev,
             [key]: {
@@ -108,6 +111,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
                     setTargetYm(data.target_ym);
                 }
                 if (data.sliders) {
+                    //비례율은 슬라이더가 아니다. 백엔드가 아예 내려주지 않고 사업 수지로 계산한다
                     //세대수 자료가 없으면 백엔드가 조합원 수 슬라이더를 만들지 않으므로 임시값을 채운다
                     setSliderData({
                         ...data.sliders,
