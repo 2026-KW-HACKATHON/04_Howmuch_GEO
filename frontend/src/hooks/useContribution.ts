@@ -86,8 +86,8 @@ export function buildMetrics(
         },
         { label: '연면적', value: toM2(project?.gross_floor_area_m2 ?? 0), sliderKey: 'floor_area_ratio' },
         {
-            label: '상가 비율 / 가격',
-            value: `${(commercialRatio * 100).toFixed(0)}% · ${Math.round(generalPrice * 1.2 * PYEONG).toLocaleString()}만원/평`,
+            label: '상가 비율',
+            value: `${(commercialRatio * 100).toFixed(0)}% · ${Math.round(generalPrice * 1.2 * PYEONG).toLocaleString()}만/평`,
             sliderKey: 'commercial_ratio',
         },
         {
