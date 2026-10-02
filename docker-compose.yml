@@ -1,6 +1,22 @@
 services:
+
+  # 데이터베이스
+  db:
+    image: mirror.gcr.io/library/postgres:15-alpine
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  # 레디스
   redis:
-    image: redis:alpine
+    image: mirror.gcr.io/library/redis:alpine
     ports:
       - "6379:6379"
     volumes:
@@ -33,6 +49,9 @@ services:
     dns:
       - 8.8.8.8
       - 8.8.4.4
+    depends_on:
+      - db
+      - redis
       
   # 프론트엔드
   frontend:
@@ -54,4 +73,5 @@ services:
       - backend
 
 volumes:
+  pg_data:
   redis_data:

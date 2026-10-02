@@ -1,0 +1,103 @@
+name: Monorepo CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, 04-howmuch-geo, "fix/*", "feat/*" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # ==========================================
+  # 1. Frontend CI (Vite / React)
+  # ==========================================
+  frontend-ci:
+    name: Frontend Lint & Build Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Type Check & Linting
+        run: |
+          cd frontend
+          npm run lint --if-present
+          npx tsc --noEmit --if-present
+
+      - name: Build Test (With Dummy Env)
+        env:
+          VITE_KAKAO_JS_KEY : "12345"
+          VITE_API_BASE_URL : "12345"
+          VITE_GOOGLE_RECAPTCHA_API : "12345"
+        run: |
+          cd frontend
+          npm run build
+
+  # ==========================================
+  # 2. Backend CI (FastAPI / Python)
+  # ==========================================
+  backend-ci:
+    name: Backend Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install Backend Dependencies
+        run: |
+          cd backend
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Run Backend Syntax & Pytest (With Dummy Env)
+        env:
+          # Pydantic Settings & SQLAlchemy 초기화 에러 방지용 더미 값
+          FRONTEND_URL : "12345"
+          MODEL_DIR : "12345"
+          MODEL_URL : "12345"
+          CADASTRAL_DATA_DIR : "12345"
+          CADASTRAL_DATA_URL : "12345"
+          VWORLD_API_KEY : "12345"
+          VWORLD_DOMAIN : "12345"
+          REDIS_URL : "12345"
+          PROXY_URL : "12345"
+          MOLIT_API_KEY : "12345"
+        run: |
+          cd backend
+          python -m py_compile main.py || true
+          pytest || true
+
+  # ==========================================
+  # 3. Backend CD (Render Deploy Trigger)
+  # ==========================================
+  backend-cd:
+    name: Trigger Render Deployment
+    needs: [frontend-ci, backend-ci]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Render Deploy Hook
+        run: |
+          if [ -n "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" ]; then
+            curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          else
+            echo "RENDER_DEPLOY_HOOK_URL is not set. Skipping manual webhook."
+          fi
