@@ -17,6 +17,12 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
 
+#백엔드는 패키지 경로로, AI/predict 를 sys.path 에 넣고 단독 실행하는 경우도 있어 둘 다 받는다
+try:
+    from AI.predict import trend
+except ImportError:
+    import trend
+
 API_URL = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev"
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -36,10 +42,12 @@ DEFAULT_MIN_BUILD_YEAR = 2018
 #슬라이더 범위 폭
 SLIDER_MARGIN = 0.15
 
-#시점 보정 상한 : 월 ±0.5% (연 ±6.2%)
-#  실거래 추세를 그대로 쓰면 월 1.4% 가 나오는데, 이를 몇 년씩 복리로 늘리면 값이 폭주한다
-#  분양 사례를 먼 미래로 보정할 때 특히 위험해서 보수적으로 자른다
-MAX_MONTHLY_RATE = 0.005
+#시점 보정 상한 : 월 ±0.7% (연 ±8.7%)
+#  실거래 추세를 그대로 쓰면 월 1.4%(연 18%)가 나오는데, 복리로 늘리면 값이 폭주한다.
+#  그렇다고 너무 낮게 자르면 정상 추세까지 깎인다 — 월 0.5%(연 6.2%) 였을 때는
+#  측정된 장기 추세(국토부 실거래 노원구 10년 창 연 8.03% = 월 0.645%)조차 매번 상한에 걸렸다.
+#  그래서 장기 추세보다는 여유를 두고, 단기 급등은 막는 선으로 월 0.7% 를 쓴다
+MAX_MONTHLY_RATE = 0.007
 
 #이 개월 수를 넘겨 외삽하면 경고한다
 LONG_HORIZON_MONTHS = 24
@@ -151,18 +159,33 @@ def fetch_trades(lawd_cd: str, ym_list: list[str], service_key: str | None = Non
 
 
 #실거래로 월 상승률을 구한다 (사례 시점 보정에도 쓰인다). 구하지 못하면 0
+#
+#  여기서 쓰는 창은 공사비·사업기간 보정과 다르다. 일부러 다르다.
+#    이 함수      최근 실거래(기본 12개월) → 분양 사례를 "지금" 으로 당긴다 (단기, 지역 시세)
+#    contribution SALE_PRICE_ANNUAL_RATE(10년 창) → 지금을 "사업기간 뒤" 로 민다 (장기)
+#  단기 보정에 10년 평균을 쓰면 최근 시세 변화를 못 잡고,
+#  장기 보정에 12개월 추세를 쓰면 복리로 폭주한다 (공사비에서 실제로 겪었다 — 연 10.16%).
+#
+#  회귀는 trend.py 와 같은 로그선형회귀를 쓴다. 구한 비율을 복리로 적용하므로
+#  단순 선형회귀 기울기를 평균으로 나눈 근사값보다 로그회귀가 맞다
 def _monthly_rate(trades: list[Trade], exclusive_ratio: float) -> tuple[float, str | None]:
     picked = [t for t in trades if t.deal_type == "중개거래"]
     if len({t.ym for t in picked}) < 4:
         return 0.0, "거래 월이 적어 시점 보정을 생략했습니다."
 
-    xs = [_months(t.ym) for t in picked]
-    ys = [t.price_per_exclusive_m2 * exclusive_ratio for t in picked]
-    x_mean, y_mean = statistics.fmean(xs), statistics.fmean(ys)
-    denom = sum((x - x_mean) ** 2 for x in xs)
-    slope = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, ys)) / denom if denom else 0.0
+    #월별 중앙값으로 묶는다. 한 달에 거래가 몰리면 그 달이 추세를 좌우하기 때문
+    by_month: dict[str, list[float]] = {}
+    for t in picked:
+        by_month.setdefault(t.ym, []).append(t.price_per_exclusive_m2 * exclusive_ratio)
+    series = {ym: statistics.median(v) for ym, v in by_month.items() if v}
 
-    rate = slope / y_mean if y_mean else 0.0
+    try:
+        #창을 넉넉히 줘서 받은 거래 전체를 쓴다 (호출부가 이미 12개월로 잘라서 넘긴다)
+        annual = trend.estimate_annual_rate(series, window_years=50).annual_rate
+    except ValueError:
+        return 0.0, "거래 월이 적어 시점 보정을 생략했습니다."
+
+    rate = (1 + annual) ** (1 / 12) - 1      # 연율 → 월율
     if abs(rate) > MAX_MONTHLY_RATE:
         capped = MAX_MONTHLY_RATE if rate > 0 else -MAX_MONTHLY_RATE
         return capped, f"실거래 추세가 월 {rate * 100:+.2f}% 로 과도해 월 {MAX_MONTHLY_RATE * 100:.1f}% 로 제한했습니다."
