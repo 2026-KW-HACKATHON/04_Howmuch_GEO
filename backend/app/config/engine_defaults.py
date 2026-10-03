@@ -1,35 +1,45 @@
 #Engine 파일 기본값
 ENGINE_DEFAULTS = {
-    "underground_ratio": 0.6,            # 지하 연면적 / 지상 연면적
-    "community_ratio": 0.05,             # 커뮤니티·부대복리 비율
-    "housing_supply_efficiency": 0.97,   # 주택 연면적 → 공급면적 전환율
-    "commercial_price_ratio": 1.2,       # 상가 분양가 = 일반분양가 × 배수
+    "parking_per_household": 1.3,        # 세대당 주차대수 (보도 기준 신축 평균). 지하 연면적 결정
+    "housing_supply_efficiency": 1.0,    # 주택 연면적 → 공급면적 전환율 (신축 5개 단지 실측 100.0~100.6%)
+    "commercial_price_ratio": 0.7,       # 상가 분양가 = 일반분양가 × 배수 (실거래 0.48 + 신축 프리미엄)
     "base_rental_ratio": 0.10,           # 임대 의무비율 (연면적 기준, 서울 주거지역, 법정)
     "uplift_rental_share": 0.5,          # 용적률 상향 완화분 중 임대 비율 (법정 상한 0.75)
     "rental_supply_area_m2": 59.0,       # 임대 1세대 공급면적
-    "rental_price_per_unit": 30_000,     # 임대 1세대 인수가(만원)
-    "avg_prior_asset": 45_000,           # 조합원 평균 종전자산(만원)
-    "appraisal_ratio": 1.3,              # 감정평가액 / 공시가격 보정률
+    "rental_floor_band": "11~20층",       # 임대동 층수 구간 (표준건축비 표의 행)
+    "rental_exclusive_area_m2": 39.0,    # 임대 1세대 주거전용면적
+    #공시가격 → 종전자산 환산 배수. 공시지가 현실화율(표준지 전국 평균 0.648)의 역수.
+    #  3번째 모델에서 토지분 + 건물분 분리로 교체되면 이 값은 토지분 배수(λ)만 맡는다
+    "appraisal_ratio": 1.543,
 }
 
 #ProjectParams 전용 제외 대상을 뺀 기본값
+#ProjectParams 로 바로 넘기는 고정값.
+#  슬라이더로 올라간 값은 여기 두면 안 된다 — ProjectParams(**sliders, **이것) 에서
+#  키가 겹치면 "got multiple values for keyword argument" TypeError 가 난다.
+#  슬라이더 목록 : 용적률 · 조합원 분양가 비율 · 기타사업비 · 세대당 주차대수 · 상가 비율
+#                 · 평당 공사비 · 일반분양가 · 임대동 층수 · 사업 기간 · 조합원 수
 ENGINE_DEFAULTS_FOR_PARAMS = {
-    "underground_ratio": 0.6,
-    "community_ratio": 0.05,
-    "housing_supply_efficiency": 0.97,
-    "commercial_price_ratio": 1.2,
+    "housing_supply_efficiency": 1.0,
+    "commercial_price_ratio": 0.7,
     "base_rental_ratio": 0.10,
     "uplift_rental_share": 0.5,
     "rental_supply_area_m2": 59.0,
-    "rental_price_per_unit": 30_000,
-    "avg_prior_asset": 45_000,
+    "rental_exclusive_area_m2": 39.0,
 }
 
 #UnitMix 사전 기본값
+#  2026-10-03 건축물대장 전유공용면적으로 실측 (재개발 신축 7개 단지, 주상복합 제외)
+#    장위 꿈의숲아이파크 · 행당 서울숲리버뷰자이 · 하왕십리 왕십리자이 · 응암 백련산SK뷰
+#    녹번 래미안베라힐즈 · 아현 마포더클래시 · 답십리 래미안미드카운티
+#  share 는 세대수 비율이 아니라 분양 공급면적 중 그 평형이 차지하는 몫이다
+#  임대로 추정되는 소형(전용 39·49형대)을 제외하고 재정규화했다
+#  74형대(0.022)는 59·84 에 절반씩, 101·130형대는 114형에 합쳤다
+#  ※ 서비스 운영하며 사례가 쌓이면 갱신할 것
 UNIT_MIX = [
-    {"name": "59", "exclusive_area_m2": 59.0, "supply_area_m2": 82.64, "share": 0.31},
-    {"name": "84", "exclusive_area_m2": 84.0, "supply_area_m2": 112.40, "share": 0.56},
-    {"name": "114", "exclusive_area_m2": 114.0, "supply_area_m2": 148.76, "share": 0.13},
+    {"name": "59", "exclusive_area_m2": 59.0, "supply_area_m2": 83.4, "share": 0.381},
+    {"name": "84", "exclusive_area_m2": 84.0, "supply_area_m2": 112.6, "share": 0.563},
+    {"name": "114", "exclusive_area_m2": 114.0, "supply_area_m2": 153.9, "share": 0.056},
 ]
 
 #조합원 수 슬라이더 범위 계수
@@ -41,3 +51,11 @@ MEMBER_COUNT_MAX_RATIO = {"재건축": 1.0, "재개발": 1.25}
 #세대수 자료가 없을 때 조합원 수 슬라이더 하한 (분양 세대수 기준)
 #  기존 세대수를 모르면 동의율 기준을 쓸 수 없어서, 분양 세대수 안에서 넓게 탐색하게 둔다
 MEMBER_COUNT_UNKNOWN_MIN_RATIO = 0.3
+
+
+#사업 기간 기본값(년). 구역지정 → 관리처분인가(분담금 확정)까지.
+#  서울시 도시정비사업 통계 주택정비형 재개발 164건 중 관리처분 도달 40건의 중앙값 13.4년.
+#  (하위25% 10.9 / 상위75% 15.9 / 노원구 실적 17~18년. 미도달 124건이 빠진 생존편향이 있어
+#   실제 기대값은 이보다 길다)
+DEFAULT_PROJECT_PERIOD_YEARS = 13
+PROJECT_PERIOD_OPTIONS = [11, 13, 16, 18]

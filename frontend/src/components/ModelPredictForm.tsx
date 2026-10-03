@@ -5,7 +5,7 @@ import { useModelPredictForm } from '../hooks/useModelPredictForm';
 
 //예측 폼 Props
 interface ModelPredictFormProps {
-    onHandleZoneData: (pnus: string[]) => Promise<any>;
+    onHandleZoneData: (pnus: string[], zoning?: string) => Promise<any>;
     onCalculateContribution: (requestData: any) => Promise<any>;
     selectedPnus: string[];
     isOpen: boolean;
@@ -20,7 +20,6 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
 }) => {
     const {
         formData,
-        setFormData,
         ownerData,
         sliderData,
         zoneInfo,
@@ -28,10 +27,17 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
         calcResult,
         loading,
         error,
+        selectedZoning,
+        zoningOptions,
+        handleSelectZoning,
         handleSliderChange,
         handleSelectUnit,
         handleZoneData,
     } = useModelPredictForm({ onHandleZoneData, onCalculateContribution, selectedPnus });
+
+    //계산 버튼을 누를 수 있는 조건 : 필지를 골랐고, 용도지역을 정했을 때
+    //  용도지역이 용적률 범위를 정하므로 이것 없이 계산하면 가정값으로 돌아간다
+    const canCalculate = selectedPnus.length > 0 && !!selectedZoning && !loading;
 
     //조합원 수는 슬라이더 값을 쓰고, 아직 없으면 폼 기본값을 쓴다
     const memberCount = sliderData.member_count?.value ?? formData.member_count;
@@ -41,32 +47,61 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
         <div className={`h-full w-full bg-slate-50/50 flex flex-col items-center p-6 font-sans overflow-y-auto transition-opacity ${isOpen ? 'opacity-100 duration-500' : 'opacity-0 pointer-events-none duration-100'}`}>
             <div className="max-w-md w-full flex flex-col items-center gap-4">
 
-                {/* 선택 상태 : 필지를 고르면 자동으로 분석된다. 버튼은 다시 불러올 때만 쓴다 */}
+                {/* 1단계 : 선택한 필지 */}
                 <div className="w-full flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5">
+                    <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-slate-500">1</span>
                     <span className="text-[12.5px] text-slate-500">선택한 필지</span>
-                    <span className="text-[12.5px] font-semibold text-slate-900">{selectedPnus.length}개</span>
-                    <button
-                        type="button"
-                        onClick={handleZoneData}
-                        disabled={loading || selectedPnus.length === 0}
-                        className="ml-auto rounded-lg bg-emerald-600 px-3 py-1.5 text-[12px] font-semibold text-white transition hover:bg-emerald-700 disabled:opacity-40"
-                    >
-                        {loading ? '분석 중...' : '다시 분석'}
-                    </button>
+                    <span className="ml-auto text-[12.5px] font-semibold text-slate-900">{selectedPnus.length}개</span>
                 </div>
 
-                {/* 구역 이름만 직접 입력. 평형과 조합원 수는 아래 패널에서 조절한다 */}
-                {/* 공시가격은 선택 필지의 개별공시지가에서 자동으로 계산된다 */}
+                {/* 2단계 : 용도지역 선택
+                    용적률 범위를 정하는 값이라 계산 전에 반드시 골라야 한다.
+                    정비사업은 정비계획에서 용도지역을 새로 정하므로 현황 조회값을 그대로 쓰지 않는다.
+                    재개발은 사실상 주거지역에서만 일어나므로 서버가 주거지역만 내려준다 */}
                 <div className="w-full bg-white rounded-xl border border-slate-200 p-4">
-                    <label className="block text-xs font-bold text-slate-700 mb-1.5 uppercase tracking-wider">구역 이름</label>
-                    <input
-                        type="text"
-                        name="name"
-                        value={formData.name}
-                        onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                        className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-800 text-sm transition"
-                    />
+                    <div className="mb-2 flex items-center gap-2">
+                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-slate-500">2</span>
+                        <label className="text-xs font-bold tracking-wider text-slate-700">용도지역</label>
+                        {!selectedZoning && (
+                            <span className="text-[11px] text-amber-600">계산하려면 선택하세요</span>
+                        )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1.5">
+                        {zoningOptions.map((z) => (
+                            <button
+                                key={z}
+                                type="button"
+                                onClick={() => handleSelectZoning(z)}
+                                className={`rounded-lg border px-2 py-1.5 text-[11.5px] transition ${
+                                    selectedZoning === z
+                                        ? 'border-blue-600 bg-blue-50 font-semibold text-blue-700'
+                                        : 'border-slate-200 text-slate-600 hover:border-slate-300'
+                                }`}
+                            >
+                                {z.replace('지역', '')}
+                            </button>
+                        ))}
+                    </div>
                 </div>
+
+                {/* 3단계 : 계산 버튼
+                    슬라이더를 움직일 때는 자동으로 다시 계산되지만,
+                    필지·용도지역을 바꾼 뒤에는 이 버튼을 눌러야 반영된다 */}
+                <button
+                    type="button"
+                    onClick={handleZoneData}
+                    disabled={!canCalculate}
+                    className="w-full rounded-xl bg-emerald-600 px-3 py-3 text-[13px] font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                    {loading
+                        ? '계산 중...'
+                        : selectedPnus.length === 0
+                            ? '지도에서 필지를 선택하세요'
+                            : !selectedZoning
+                                ? '용도지역을 선택하세요'
+                                : '분담금 계산'}
+                </button>
 
                 {/* 예상 분담금 패널 : 필지 선택 전에는 0, 선택하면 그 필지만큼 계산된다 */}
                 <ContributionPanel

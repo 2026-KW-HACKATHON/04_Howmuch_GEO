@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
 
+import trend
+
 # Dataset 불러오기
 DATA_DIR = Path(__file__).parent / "data"
 INDEX_CSV = DATA_DIR / "cost_index.csv"     # 건설공사비지수, 2026.5월 기준 137.67 (KOSIS 공표값)
@@ -66,34 +68,20 @@ def load_cases(path: Path = CASES_CSV) -> list[CostCase]:
     ]
 
 
-#해당 시점의 지수. 표에 없으면 앞뒤 값으로 선형 보간, 마지막 시점 이후는 최근 상승률로 연장
+#해당 시점의 지수. 표 구간 안은 선형 보간, 표 밖은 trend.py 의 공통 규칙(10년 창)으로 연장
+#  예전에는 "최근 24개월 상승률"로 연장했는데, 지수표에 점이 몇 개 없으면
+#  4개월 변동이 연 10.16% 로 증폭되어 13년 뒤 공사비가 3.5배로 튀었다.
+#  공사비·분양가·지가가 같은 규칙을 쓰도록 trend.py 한곳에 모았다
 def index_at(ym: str, index: dict[str, float] | None = None) -> float:
     index = index or load_index()
-    if ym in index:
-        return index[ym]
-
-    points = sorted(((_months(k), v) for k, v in index.items()))
-    target = _months(ym)
-
-    if target <= points[0][0]:
-        return points[0][1]
-
-    #구간 안이면 선형 보간
-    for (m0, v0), (m1, v1) in zip(points, points[1:]):
-        if m0 <= target <= m1:
-            return v0 + (v1 - v0) * (target - m0) / (m1 - m0)
-
-    #마지막 시점 이후 : 최근 24개월 상승률을 월 단위로 환산해 연장
-    (m_last, v_last) = points[-1]
-    base = next(((m, v) for m, v in points if m_last - m <= 24), points[0])
-    monthly_rate = (v_last / base[1]) ** (1 / max(m_last - base[0], 1)) - 1
-    return v_last * (1 + monthly_rate) ** (target - m_last)
+    return trend.index_at(ym, index)
 
 
 #계약 당시 공사비를 목표 시점 기준으로 보정
 def escalate(cost: float, from_ym: str, to_ym: str, index: dict[str, float] | None = None) -> float:
     index = index or load_index()
-    return cost * index_at(to_ym, index) / index_at(from_ym, index)
+    rate = trend.estimate_annual_rate(index).annual_rate
+    return cost * trend.index_at(to_ym, index, rate) / trend.index_at(from_ym, index, rate)
 
 
 #목표 시점의 평당 공사비 예측
@@ -118,7 +106,16 @@ def predict_cost_per_pyeong(
     if not cases:
         raise ValueError("공사비 사례가 하나도 없습니다. data/cost_cases.csv 를 확인하세요.")
 
-    escalated = [escalate(c.cost_per_pyeong, c.ym, target_ym, index) for c in cases]
+    #상승률을 한 번만 구해 모든 사례에 같은 값을 쓴다 (사례마다 다른 창을 쓰면 안 된다)
+    rate_est = trend.estimate_annual_rate(index)
+    warnings.extend(f"건설공사비지수 : {w}" for w in rate_est.warnings)
+
+    escalated = [
+        c.cost_per_pyeong
+        * trend.index_at(target_ym, index, rate_est.annual_rate)
+        / trend.index_at(c.ym, index, rate_est.annual_rate)
+        for c in cases
+    ]
     predicted = median(escalated)
 
     if len(cases) < 5:
@@ -126,7 +123,19 @@ def predict_cost_per_pyeong(
 
     last_ym = max(index, key=_months)
     if _months(target_ym) > _months(last_ym):
-        warnings.append(f"지수 표의 마지막 시점({last_ym}) 이후라 최근 상승률로 연장 추정했습니다.")
+        warnings.append(
+            f"지수 표의 마지막 시점({last_ym}) 이후라 연 {rate_est.annual_rate * 100:.2f}% 로 "
+            "연장 추정했습니다."
+        )
+
+    #표보다 이전 계약이 섞여 있으면 역산 구간이라 오차가 커진다
+    first_ym = min(index, key=_months)
+    older = [c.ym for c in cases if _months(c.ym) < _months(first_ym)]
+    if older:
+        warnings.append(
+            f"{len(older)}건이 지수 표 시작({first_ym})보다 이전 계약이라 상승률로 역산했습니다. "
+            "지수 표를 과거까지 채우면 정확해집니다."
+        )
 
     return CostPrediction(
         cost_per_pyeong=round(predicted, 1),

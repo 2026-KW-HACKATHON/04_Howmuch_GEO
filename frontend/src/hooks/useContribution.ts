@@ -23,7 +23,6 @@ export interface ContributionResult {
     right_value: number;         //권리가액
     prior_asset: number;         //종전자산 추정액
     proportional_rate: number;   //비례율(%)
-    rate_fixed: boolean;
     project: {
         unit_types: { name: string; supply_area_m2: number; count: number }[];
         rental_count: number;
@@ -86,8 +85,10 @@ export function buildMetrics(
         },
         { label: '연면적', value: toM2(project?.gross_floor_area_m2 ?? 0), sliderKey: 'floor_area_ratio' },
         {
-            label: '상가 비율',
-            value: `${(commercialRatio * 100).toFixed(0)}% · ${Math.round(generalPrice * 1.2 * PYEONG).toLocaleString()}만/평`,
+            label: '상가 비율 / 가격',
+            //상가 가격 배수 0.7 : 서울 10개 구 상업업무용 실거래가 아파트 대비 0.48 + 신축 프리미엄
+            //  engine_defaults.commercial_price_ratio 와 같은 값을 써야 한다
+            value: `${(commercialRatio * 100).toFixed(0)}% · ${Math.round(generalPrice * 0.7 * PYEONG).toLocaleString()}만원/평`,
             sliderKey: 'commercial_ratio',
         },
         {
@@ -102,11 +103,8 @@ export function buildMetrics(
             sliderKey: 'construction_cost_per_pyeong',
         },
         { label: '총사업비', value: toEok(project?.total_cost ?? 0) },
-        {
-            label: '비례율',
-            value: `${(result?.proportional_rate ?? 0).toFixed(1)}%`,
-            sliderKey: 'proportional_rate',
-        },
+        //비례율은 조절값이 아니라 사업 수지로 계산되는 결과값이다
+        { label: '비례율', value: `${(result?.proportional_rate ?? 0).toFixed(1)}%` },
         {
             label: '일반분양',
             value: `${Math.max(saleCount - members, 0).toLocaleString()}세대`,

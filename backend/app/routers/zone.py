@@ -5,7 +5,7 @@ from typing import List, Optional
 from app.config.engine_defaults import ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS, MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
 from app.utils.slider_builder import build_sliders
 from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
-from AI.engine.zone import build_zone_summary
+from AI.engine.zone import SELECTABLE_ZONING, build_zone_summary
 from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
 from AI.predict.construction_cost import predict_cost_per_pyeong
 from AI.predict.sale_price import Trade, fetch_trades, predict_sale_price_per_m2
@@ -157,17 +157,29 @@ async def fetch_land_price_per_m2(pnu: str) -> int:
     try:
         url = PROXY_URL + "/ned/data/getIndvdLandPrice"
 
+        #numOfRows 를 주지 않으면 기본 10건만 와서 최신 연도가 잘린다.
+        #  pageNo 가 없으면 numOfRows 가 무시되므로 둘을 함께 넘긴다
         params = {
             "key": VWORLD_API_KEY,
             "pnu": pnu,
-            "format": "json"
+            "format": "json",
+            "domain": VWORLD_DOMAIN,
+            "numOfRows": 30,
+            "pageNo": 1,
         }
-        
+
         response = VWORLD_SESSION.get(url, params=params, timeout=5)
         data = response.json()
 
-        price_info = data.get("indvdLandPrices", {}).get("field", {})
-        price = price_info.get("pblntfPclnd")
+        rows = data.get("indvdLandPrices", {}).get("field", [])
+        if isinstance(rows, dict):
+            rows = [rows]
+
+        #연도별 이력이 오므로 가장 최근 기준연도를 쓴다
+        price = None
+        if rows:
+            latest = max(rows, key=lambda row: str(row.get("stdrYear", "")))
+            price = latest.get("pblntfPclnd")
         
         print(f"[ Log ] : Land Price for PNU {pnu} is {price}")
         return int(price) if price else 0
@@ -192,11 +204,15 @@ async def fetch_land_characteristics(pnu: str) -> dict:
     try:
         time.sleep(VWORLD_CALL_GAP)
         url = PROXY_URL + "/ned/data/getLandCharacteristics"
+        #numOfRows·pageNo 를 함께 넘겨야 연도별 이력이 다 온다.
+        #  없으면 기본 10건만 와서 최신 공시지가 대신 과거 값이 잡힌다
         params = {
             "key": VWORLD_API_KEY,
             "pnu": pnu,
             "format": "json",
-            "domain": VWORLD_DOMAIN
+            "domain": VWORLD_DOMAIN,
+            "numOfRows": 30,
+            "pageNo": 1,
         }
         response = VWORLD_SESSION.get(url, params=params, timeout=5)
         data = response.json()
@@ -260,12 +276,18 @@ async def get_zone(req: ZoneRequest):
             else:
                 price = land_data["land_price_per_m2"] or await fetch_land_price_per_m2(p)
 
+            #용도지역 : 사용자가 고른 값이 있으면 그것을 전 필지에 적용한다.
+            #  용적률 범위(far_min~far_max)가 여기서 정해지고, 그게 슬라이더 범위가 된다.
+            #  조회값을 그대로 쓰면 한 구역에 여러 용도지역이 섞여 가중평균이 되는데,
+            #  정비계획에서 용도지역을 새로 정하는 사업 성격과 맞지 않는다
+            zoning = req.zoning or land_data["zoning"]
+
             parcels.append(
                 ParcelInfo(
-                    pnu=p, 
-                    area_m2=area_m2, 
-                    land_price_per_m2=price, 
-                    zoning=land_data["zoning"], 
+                    pnu=p,
+                    area_m2=area_m2,
+                    land_price_per_m2=price,
+                    zoning=zoning,
                     land_category=land_data["land_category"]
                 )
             )
@@ -273,10 +295,11 @@ async def get_zone(req: ZoneRequest):
         target_ym = req.target_ym or datetime.now().strftime("%Y-%m")
         zone = build_zone_summary(parcels)
 
-        if failed_pnus:
+        #사용자가 용도지역을 직접 골랐으면 조회 실패는 용적률에 영향을 주지 않는다
+        if failed_pnus and not req.zoning:
             zone.warnings.append(
                 f"{len(failed_pnus)}개 필지의 용도지역을 불러오지 못해 제2종일반주거지역으로 가정했습니다. "
-                "용적률이 실제와 다를 수 있습니다."
+                "용적률이 실제와 다를 수 있습니다. 용도지역을 직접 선택하면 이 가정을 덮어씁니다."
             )
 
         #공사비와 분양가는 같은 시점으로 예측한다. 시점이 어긋나면 비례율이 크게 왜곡된다
@@ -297,6 +320,9 @@ async def get_zone(req: ZoneRequest):
         "zone": asdict(zone),
         "far_base": zone.far_min,
         "target_ym": target_ym,
+        #프론트 용도지역 버튼 목록. 엔진 FAR_TABLE 과 어긋나지 않게 서버가 내려준다
+        "zoning_options": SELECTABLE_ZONING,
+        "selected_zoning": req.zoning,
         "sliders": build_sliders(zone, cost, req.household_count, sale=sale),
         "cost_prediction": asdict(cost),
         "sale_prediction": asdict(sale),

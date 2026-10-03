@@ -51,9 +51,9 @@ function App() {
     }, []);
 
     //Zone 데이터 API 호출 Handler
-    const handleZoneData = useCallback(async (pnus: string[]) => {
+    const handleZoneData = useCallback(async (pnus: string[], zoning?: string) => {
         try {
-            const response = await getZoneInfo(pnus, { parcels: selectedParcels });
+            const response = await getZoneInfo(pnus, { parcels: selectedParcels, zoning });
             return response;
         } catch (err){
             console.log("[ handleZoneData 오류 발생 ] : ", err);

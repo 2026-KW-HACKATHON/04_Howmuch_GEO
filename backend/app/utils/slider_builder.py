@@ -1,3 +1,4 @@
+from AI.engine.rental_cost import DEFAULT_FLOOR_BAND, FLOOR_BANDS
 from AI.engine.schema import ZoneSummary
 from AI.predict.construction_cost import CostPrediction
 from AI.predict.sale_price import SalePrediction
@@ -18,8 +19,15 @@ def build_sliders(
 ) -> dict:
     sliders = {
         "floor_area_ratio": {"value": zone.far_min, "min": zone.far_min, "max": zone.far_max},
-        "member_price_ratio": {"value": 0.8, "min": 0.7, "max": 0.9},
+        #조합원 분양가 비율 : 일반분양가 대비 배수. 조합 총회 의결 사항
+        #  0.75 ~ 0.95 (통상 0.8~0.9). 0.8 이 기본값
+        "member_price_ratio": {"value": 0.8, "min": 0.75, "max": 0.95},
         "other_cost_ratio": {"value": 0.35, "min": 0.25, "max": 0.45},
+        #세대당 주차대수 : 지하 연면적을 결정한다
+        #  최소 1.0 = 주택건설기준 제27조 법정 하한 max(전용면적합계 ÷ 75㎡, 세대수 × 1.0)
+        #  기본 1.3 = 보도 기준 신축 평균 (장위 꿈의숲 실측 1.20)
+        #  최대 2.0 = 하이엔드 재건축 여지
+        "parking_per_household": {"value": 1.3, "min": 1.0, "max": 2.0},
         "commercial_ratio": {"value": 0.03, "min": 0.0, "max": 0.2},
         "construction_cost_per_pyeong": {
             "value": cost.cost_per_pyeong,
@@ -31,8 +39,27 @@ def build_sliders(
             if sale
             else {"value": 998.25, "min": 700, "max": 1300}
         ),
-        "proportional_rate": {"value": 100, "min": 80, "max": 120, "fixed": True},
+        #임대 인수수입 : 임대동 층수 구간을 고르면 표준건축비 표의 행이 정해진다 (노드 슬라이더)
+        #  o────o────o────o 형태로 네 구간만 선택할 수 있다. 중간값은 의미가 없다
+        #  전용면적 구간은 임대 1세대 면적에서 자동으로 정해지므로 사용자는 층수만 고른다
+        "rental_floor_band": {"value": DEFAULT_FLOOR_BAND, "options": FLOOR_BANDS},
+
+        #사업 기간 : 구역지정 → 관리처분인가(분담금 확정)까지 걸리는 햇수 (노드 슬라이더)
+        #  서울시 도시정비사업 통계 주택정비형 재개발 164건에서 뽑았다
+        #    하위 25% 10.9년 / 중앙값 13.4년 / 상위 75% 15.9년 / 노원구 실적 17~18년
+        #  이 값이 공사비·분양가·종전자산을 모두 같은 시점으로 민다.
+        #  (종전자산만 t−3.3년 — 평가 기준시점이 사업시행인가일이라 관리처분보다 앞선다)
+        "project_period_years": {"value": 13, "options": [11, 13, 16, 18]},
     }
+
+    #비례율(proportional_rate)은 슬라이더가 아니다.
+    #  다른 값을 조절하면 (종후자산 − 총사업비) ÷ 종전자산 으로 다시 계산된다
+    #
+    #감정평가 보정률(appraisal_ratio)도 슬라이더가 아니다.
+    #  개인·구역 종전자산에 같은 배수가 들어가 분담금에서 약분되기 때문이다(수치 검증됨).
+    #  바꿔도 화면의 비례율 표시만 움직이므로 조절 수단으로 두면 사용자를 오해시킨다.
+    #  ENGINE_DEFAULTS 의 1.543(공시지가 현실화율 0.648 의 역수)을 고정으로 쓰고,
+    #  3번째 모델(종전자산 토지분+건물분 분리)이 들어가면 계산 결과로 바뀐다
 
     #조합원 수 : 소유자 명부는 공개 자료가 아니므로 세대수를 기준으로 범위를 만든다
     #  여기서는 분양 세대수를 아직 모르므로 세대수 기준 범위만 준다.

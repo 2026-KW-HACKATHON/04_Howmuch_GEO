@@ -16,6 +16,11 @@ class ZoneRequest(BaseModel):
     parcels: Optional[List[ParcelHintDTO]] = Field(None, description="선택 필지의 면적·공시지가. 없으면 V-World 데이터 API로 조회한다")
     target_ym: Optional[str] = Field(None, description="공사비 예측 기준 시점 'YYYY-MM' (착공 예상 연월). 없으면 현재 연월")
     household_count: Optional[int] = Field(None, description="구역 세대수. 조합원 수 슬라이더 범위를 만드는 데 사용")
+    zoning: Optional[str] = Field(
+        None,
+        description="사용자가 고른 용도지역. 주면 선택 필지 전체에 이 값을 적용해 용적률 범위를 만든다. "
+                    "없으면 필지별 조회값을 그대로 쓴다",
+    )
 
 #Owner 요청 스키마
 class OwnerRequestDTO(BaseModel):
