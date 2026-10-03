@@ -28,7 +28,11 @@ def build_sliders(
         #  기본 1.3 = 보도 기준 신축 평균 (장위 꿈의숲 실측 1.20)
         #  최대 2.0 = 하이엔드 재건축 여지
         "parking_per_household": {"value": 1.3, "min": 1.0, "max": 2.0},
-        "commercial_ratio": {"value": 0.03, "min": 0.0, "max": 0.2},
+        #상가 비율 : 지상 연면적 중 근린생활시설 몫
+        #  기본 0.02 — 재개발 대단지 실측 1.8~2.4% 이고, 준공 4개 단지로 면적 체인을 검증했을 때
+        #  0.02 에서 세대수 평균오차가 -0.5% 로 가장 작았다 (0 이면 +1.4%, 0.05 면 -3.6%)
+        #  상한은 용도지역별로 따로 정한다 (전용 0.03 / 1종 0.05 / 2·3종 0.10 / 준주거 0.30)
+        "commercial_ratio": {"value": 0.02, "min": 0.0, "max": 0.2},
         "construction_cost_per_pyeong": {
             "value": cost.cost_per_pyeong,
             "min": cost.slider_min,
