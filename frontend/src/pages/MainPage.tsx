@@ -26,9 +26,14 @@ export default function MainPage() {
         handleContributionData,
         logoutButtonAction,
         userName,
-        userEmail
+        userEmail,
+        dailyCredits,
+        creditsUnavailable,
+        resettingCredits,
+        resetCreditsAction,
     } = useMainPage();
 
+    //프로필 메뉴 외부 클릭 시 닫기 및 ESC 키로 닫기
     useEffect(() => {
         if (!isProfileOpen) return;
 
@@ -80,7 +85,18 @@ export default function MainPage() {
                             <p className="font-semibold text-slate-900">내 프로필</p>
                             <p className="mt-1 text-sm text-slate-500">{userName}</p>
                             <p className="text-xs text-slate-400">{userEmail}</p>
+                            <p className="mt-3 text-sm font-medium text-slate-700">
+                                오늘 크레딧 {dailyCredits ?? '-'} / 5
+                            </p>
                         </div>
+                        <button
+                            type="button"
+                            onClick={resetCreditsAction}
+                            disabled={resettingCredits || creditsUnavailable}
+                            className="w-full border-b border-slate-100 px-4 py-3 text-left text-sm font-medium text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                            {resettingCredits ? '초기화 중...' : '크레딧 초기화'}
+                        </button>
                         <button
                             type="button"
                             onClick={logoutButtonAction}
@@ -95,7 +111,7 @@ export default function MainPage() {
             {/* 사이드바 영역 */}
             <SideBar isOpen={isOpen} onToggleSidebar={toggleSidebar} 
                 children={
-                    <ModelPredictForm onHandleZoneData={handleZoneData} onCalculateContribution={handleContributionData} isOpen={isOpen} selectedPnus={selectedPnus}/>
+                    <ModelPredictForm onHandleZoneData={handleZoneData} onCalculateContribution={handleContributionData} isOpen={isOpen} selectedPnus={selectedPnus} dailyCredits={dailyCredits} creditsUnavailable={creditsUnavailable}/>
                 }
             />               
         </div>

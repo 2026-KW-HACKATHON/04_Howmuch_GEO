@@ -9,6 +9,8 @@ interface ModelPredictFormProps {
     onCalculateContribution: (requestData: any) => Promise<any>;
     selectedPnus: string[];
     isOpen: boolean;
+    dailyCredits: number | null;
+    creditsUnavailable: boolean;
 }
 
 //예측 폼 컴포넌트
@@ -16,7 +18,9 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
     onHandleZoneData, 
     onCalculateContribution,
     selectedPnus,
-    isOpen 
+    isOpen,
+    dailyCredits,
+    creditsUnavailable,
 }) => {
     const {
         formData,
@@ -37,7 +41,12 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
 
     //계산 버튼을 누를 수 있는 조건 : 필지를 골랐고, 용도지역을 정했을 때
     //  용도지역이 용적률 범위를 정하므로 이것 없이 계산하면 가정값으로 돌아간다
-    const canCalculate = selectedPnus.length > 0 && !!selectedZoning && !loading;
+    const canCalculate = selectedPnus.length > 0
+        && !!selectedZoning
+        && !loading
+        && !creditsUnavailable
+        && dailyCredits !== null
+        && dailyCredits > 0;
 
     //조합원 수는 슬라이더 값을 쓰고, 아직 없으면 폼 기본값을 쓴다
     const memberCount = Number(sliderData.member_count?.value ?? formData.member_count);
@@ -96,11 +105,17 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
                 >
                     {loading
                         ? '계산 중...'
+                        : creditsUnavailable
+                            ? '크레딧 정보를 불러올 수 없습니다'
+                        : dailyCredits === null
+                            ? '크레딧 확인 중...'
+                        : dailyCredits <= 0
+                            ? '오늘의 크레딧을 모두 사용했습니다'
                         : selectedPnus.length === 0
                             ? '지도에서 필지를 선택하세요'
                             : !selectedZoning
                                 ? '용도지역을 선택하세요'
-                                : '분담금 계산'}
+                                : `분담금 계산 · 크레딧 ${dailyCredits}개`}
                 </button>
 
                 {/* 예상 분담금 패널 : 필지 선택 전에는 0, 선택하면 그 필지만큼 계산된다 */}

@@ -1,6 +1,6 @@
 from dataclasses import asdict
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from typing import List, Optional
 from app.config.engine_defaults import ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS, MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
 from app.utils.slider_builder import build_sliders
@@ -17,7 +17,8 @@ import requests
 import time
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from app.core.redis import redis_client
+from app.cache.redis import redis_client
+from app.services.credit_service import consume_daily_credit, ensure_daily_credit_available
 import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -36,6 +37,13 @@ load_dotenv()
 VWORLD_API_KEY = os.getenv("VWORLD_API_KEY")
 VWORLD_DOMAIN = os.getenv("VWORLD_DOMAIN")
 PROXY_URL = os.getenv("PROXY_URL")
+
+
+if not PROXY_URL:
+    raise ValueError("PROXY_URL 환경 변수가 설정되지 않았습니다.")
+
+PROXY_URL = f"{PROXY_URL.rstrip('/')}/ned/data/"
+
 
 #V-World 데이터 API 세션
 VWORLD_SESSION = requests.Session()
@@ -59,22 +67,24 @@ TRADE_MONTHS = 12
 
 #Redis 를 통한 Trade 캐시 불러오기
 async def get_cached_trades(lawd_cd: str, target_ym: str) -> Optional[list]:
-    if not redis_client:
-        return None
+    cache_key = f"trades:{lawd_cd}:{target_ym}"
     try:
-        data = await redis_client.get(f"trades:{lawd_cd}:{target_ym}")
+        data = await redis_client.get(cache_key)
         if data:
             raw_list = json.loads(data)
+            print(f"[Cache HIT] Trade {cache_key}")
             return [Trade(**item) if isinstance(item, dict) else item for item in raw_list]
+        print(f"[Cache MISS] Trade {cache_key}")
         return None
     except Exception as e:
-        print(f"[Warning] Redis Read Error (Trade): {e}")
+        print(f"[Warning] Redis Read/Decode Error (Trade {cache_key}): {e}")
         return None
 
 #Redis 를 통한 Trade 캐시 저장
 async def set_cached_trades(lawd_cd: str, target_ym: str, trades: list):
-    if not redis_client or not trades:
+    if not trades:
         return
+    cache_key = f"trades:{lawd_cd}:{target_ym}"
     try:
         # Pydantic v2 / Pydantic v1 / Dataclass / 일반 dict 모두 대응하는 직렬화
         trades_dict = []
@@ -93,19 +103,20 @@ async def set_cached_trades(lawd_cd: str, target_ym: str, trades: list):
                 trades_dict.append(str(trade))
 
         serialized_data = json.dumps(trades_dict, ensure_ascii=False)
-        print("[ Log ] : Save cache (Trade)")
-        await redis_client.set(f"trades:{lawd_cd}:{target_ym}", serialized_data, ex=86400)
+        await redis_client.set(cache_key, serialized_data, ex=86400)
+        print(f"[Cache SAVE] Trade {cache_key} (TTL: 86400s)")
     except Exception as e:
-        print(f"[Warning] Redis Write Error (Trade): {e}")
+        print(f"[Warning] Redis Write Error (Trade {cache_key}): {e}")
 
 #분양가 시점 보정용 실거래 목록
 async def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
-    if not os.getenv("MOLIT_API_KEY"):
-        return []
-
     cached = await get_cached_trades(lawd_cd, target_ym)
     if cached is not None:
         return cached
+
+    if not os.getenv("MOLIT_API_KEY"):
+        print(f"[Cache BYPASS] Trade API key missing ({lawd_cd}:{target_ym})")
+        return []
 
     # target_ym 이전 TRADE_MONTHS 개월
     year, month = (int(v) for v in target_ym.split("-"))
@@ -127,35 +138,34 @@ async def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
 
 #Redis 를 통한 Land 캐시 불러오기
 async def get_cached_land(pnu: str) -> Optional[dict]:
-    if not redis_client:
-        return None
     cache_key = f"land:{pnu}"
     try:
         val = await redis_client.get(cache_key)
         if val:
-            print("[ Log ] : Get from cache (Land)")
+            print(f"[Cache HIT] Land {cache_key}")
             return json.loads(val)
+        print(f"[Cache MISS] Land {cache_key}")
     except Exception as e:
-        print(f"[Warning] Redis Read Error (Land): {e}")
+        print(f"[Warning] Redis Read/Decode Error (Land {cache_key}): {e}")
     return None
 
 #Redis 를 통한 Land 캐시 저장하기
 async def set_cached_land(pnu: str, data: dict):
-    if not redis_client or not data:
+    if not data:
         return
     cache_key = f"land:{pnu}"
     try:
         # Land 객체 내 Pydantic/Dataclass가 포함된 경우 대비 ensure_ascii=False 처리
         serialized_data = json.dumps(data, ensure_ascii=False, default=str)
         await redis_client.setex(cache_key, 604800, serialized_data)
-        print("[ Log ] : Save cache (Land)")
+        print(f"[Cache SAVE] Land {cache_key} (TTL: 604800s)")
     except Exception as e:
-        print(f"[Warning] Redis Write Error (Land): {e}")
+        print(f"[Warning] Redis Write Error (Land {cache_key}): {e}")
 
 #부동산 계산식 API 라우터
 async def fetch_land_price_per_m2(pnu: str) -> int:
     try:
-        url = PROXY_URL + "/ned/data/getIndvdLandPrice"
+        url = PROXY_URL + "getIndvdLandPrice"
 
         #numOfRows 를 주지 않으면 기본 10건만 와서 최신 연도가 잘린다.
         #  pageNo 가 없으면 numOfRows 가 무시되므로 둘을 함께 넘긴다
@@ -203,9 +213,8 @@ async def fetch_land_characteristics(pnu: str) -> dict:
     
     try:
         time.sleep(VWORLD_CALL_GAP)
-        url = PROXY_URL + "/ned/data/getLandCharacteristics"
-        #numOfRows·pageNo 를 함께 넘겨야 연도별 이력이 다 온다.
-        #  없으면 기본 10건만 와서 최신 공시지가 대신 과거 값이 잡힌다
+        url = PROXY_URL + "getLandCharacteristics"
+
         params = {
             "key": VWORLD_API_KEY,
             "pnu": pnu,
@@ -251,7 +260,15 @@ async def fetch_land_characteristics(pnu: str) -> dict:
     "/zone",
     summary="구역 선택 및 요약 집계"
 )
-async def get_zone(req: ZoneRequest):
+async def get_zone(req: ZoneRequest, request: Request):
+    user_id = request.session.get("user_id")
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="로그인이 필요합니다.",
+        )
+    await ensure_daily_credit_available(int(user_id))
+
     try:
         parcels = []
 
@@ -316,7 +333,7 @@ async def get_zone(req: ZoneRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"[Warning] 구역 데이터 집계 중 오류 발생: {str(e)}")
 
-    return {
+    result = {
         "zone": asdict(zone),
         "far_base": zone.far_min,
         "target_ym": target_ym,
@@ -327,3 +344,5 @@ async def get_zone(req: ZoneRequest):
         "cost_prediction": asdict(cost),
         "sale_prediction": asdict(sale),
     }
+    result["credits_remaining"] = await consume_daily_credit(int(user_id))
+    return result

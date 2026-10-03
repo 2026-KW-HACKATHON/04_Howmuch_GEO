@@ -6,8 +6,7 @@ import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 from statistics import median
-
-import trend
+from . import trend
 
 # Dataset 불러오기
 DATA_DIR = Path(__file__).parent / "data"

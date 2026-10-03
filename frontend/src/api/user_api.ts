@@ -1,5 +1,11 @@
 import { api } from './client';
 
+export interface DailyCredits {
+    credits_remaining: number;
+    daily_credit_limit: number;
+    resets_at: string;
+}
+
 //사용자 회원가입 요청 스키마
 export interface SignupRequest {
     email: string;
@@ -35,5 +41,17 @@ export async function userLogout(): Promise<any> {
 //사용자 정보 조회 API HTTP Handler
 export async function userInfo(): Promise<any> {
     const response = await api.get('/api/v1/user/info');
+    return response.data;
+}
+
+//사용자 일일 크레딧 조회 API HTTP Handler
+export async function userCredits(): Promise<DailyCredits> {
+    const response = await api.get('/api/v1/user/credits');
+    return response.data;
+}
+
+//사용자 일일 크레딧 초기화 API HTTP Handler
+export async function resetUserCredits(): Promise<DailyCredits> {
+    const response = await api.post('/api/v1/user/credits/reset');
     return response.data;
 }
