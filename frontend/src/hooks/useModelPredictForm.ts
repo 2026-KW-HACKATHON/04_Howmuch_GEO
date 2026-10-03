@@ -22,7 +22,7 @@ const DEFAULT_ZONING_OPTIONS = [
 
 //예측 폼 Hook Props
 export interface ModelPredictFormProps {
-    onHandleZoneData: (pnus: string[]) => Promise<any>;
+    onHandleZoneData: (pnus: string[], zoning?: string) => Promise<any>;
     onCalculateContribution: (requestData: any) => Promise<any>;
     selectedPnus: string[];
 }
@@ -257,7 +257,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
 
         setSliderData((prev) => {
             const current = prev.member_count;
-            const value = Math.min(Math.max(current?.value ?? range.min, range.min), range.max);
+            const value = Math.min(Math.max(Number(current?.value ?? range.min), range.min), range.max);
 
             //같은 범위면 상태를 그대로 둔다 (재계산 반복 방지)
             if (current && current.min === range.min && current.max === range.max && current.value === value) {

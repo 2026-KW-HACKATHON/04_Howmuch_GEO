@@ -17,7 +17,7 @@ const MapLegend: React.FC = () => {
     ];
 
     return (
-        <div className="absolute bottom-6 right-6 z-10 bg-white/95 backdrop-blur-md rounded-xl shadow-xl border border-gray-200 text-xs overflow-hidden transition-all duration-300">
+        <div className="w-fit bg-white/95 backdrop-blur-md rounded-xl shadow-xl border border-gray-200 text-xs overflow-hidden transition-all duration-300">
             
             {/* 제목 및 토글 버튼 */}
             <button

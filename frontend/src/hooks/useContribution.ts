@@ -71,8 +71,10 @@ export function buildMetrics(
     const saleCount = project ? project.unit_types.reduce((sum, unit) => sum + unit.count, 0) : 0;
     const rentalCount = project?.rental_count ?? 0;
     const totalUnits = saleCount + rentalCount;
-    const generalPrice = sliders.general_price_per_m2?.value ?? 0;
-    const commercialRatio = sliders.commercial_ratio?.value ?? 0;
+    const generalPrice = Number(sliders.general_price_per_m2?.value ?? 0);
+    const commercialRatio = Number(sliders.commercial_ratio?.value ?? 0);
+    const floorAreaRatio = Number(sliders.floor_area_ratio?.value ?? 0);
+    const constructionCost = Number(sliders.construction_cost_per_pyeong?.value ?? 0);
 
     //계산 결과가 없으면 조합원 수도 0으로 둔다 (분양 세대수를 모르는 상태)
     const members = result ? memberCount : 0;
@@ -93,13 +95,13 @@ export function buildMetrics(
         },
         {
             label: '용적률',
-            value: `${(sliders.floor_area_ratio?.value ?? 0).toFixed(0)}%`,
+            value: `${floorAreaRatio.toFixed(0)}%`,
             sliderKey: 'floor_area_ratio',
         },
         { label: '총 세대수', value: `${totalUnits.toLocaleString()}세대` },
         {
             label: '공사비',
-            value: `${(sliders.construction_cost_per_pyeong?.value ?? 0).toLocaleString()}만원/평`,
+            value: `${constructionCost.toLocaleString()}만원/평`,
             sliderKey: 'construction_cost_per_pyeong',
         },
         { label: '총사업비', value: toEok(project?.total_cost ?? 0) },

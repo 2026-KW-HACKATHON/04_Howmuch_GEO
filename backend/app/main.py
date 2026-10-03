@@ -1,6 +1,10 @@
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.sessions import SessionMiddleware
+from app.exceptions.exceptions_handler import add_exception_handlers
+from app.database.database_connection import engine
 from dotenv import load_dotenv
+from app.database.orm import Base
 import os, sys
 import httpx
 import gdown
@@ -15,13 +19,15 @@ if root_dir not in sys.path:
 
 #.env 파일 로드
 load_dotenv()
-FRONTEND_URL = os.getenv("FRONTEND_URL")
 
-#Cadastral 데이터 다운로드
+#환경 변수 로드
+FRONTEND_URL = os.getenv("FRONTEND_URL")
+COOKIE_SECRET_KEY = os.getenv("COOKIE_SECRET_KEY")
 CADASTRAL_DATA_DIR = os.getenv("CADASTRAL_DATA_DIR")
 CADASTRAL_DATA_URL = os.getenv("CADASTRAL_DATA_URL")
 CADASTRAL_DATA_PATH = os.path.join(CADASTRAL_DATA_DIR, "mock_data.py")
 
+#CADASTRAL_DATA_DIR 디렉터리 생성 및 mock_data.py 파일 다운로드
 os.makedirs(CADASTRAL_DATA_DIR, exist_ok=True)
 if not os.path.exists(CADASTRAL_DATA_PATH):
     gdown.download(CADASTRAL_DATA_URL, CADASTRAL_DATA_PATH, quiet=False)
@@ -29,14 +35,33 @@ if not os.path.exists(CADASTRAL_DATA_PATH):
 #FastAPI 객체 생성
 app = FastAPI()
 
+#FastAPI 라우터 import
 from app.routers.cadastral import router as cadastral_router
 from app.routers.zone import router as zone_router
 from app.routers.contribution import router as contribution_router
+from app.routers.user import router as user_router
+
+#Database 테이블 생성 이벤트 핸들러 등록
+@app.on_event("startup")
+def create_tables():
+    Base.metadata.create_all(bind=engine)
 
 #AI 모델 라우터 등록
 app.include_router(cadastral_router)
 app.include_router(zone_router)
 app.include_router(contribution_router)
+app.include_router(user_router)
+
+#사용자 정의 예외 처리기 등록
+add_exception_handlers(app)
+
+#Cookie 세션 관리 MiddleWare 설정
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=COOKIE_SECRET_KEY,
+    same_site="none",
+    https_only=True
+)
 
 #MiddleWare 설정 (개발단계 임시 설정)
 app.add_middleware(
