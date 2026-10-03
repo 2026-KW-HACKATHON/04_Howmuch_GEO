@@ -37,12 +37,6 @@ VWORLD_API_KEY = os.getenv("VWORLD_API_KEY")
 VWORLD_DOMAIN = os.getenv("VWORLD_DOMAIN")
 PROXY_URL = os.getenv("PROXY_URL")
 
-#토지특성·개별공시지가(ned)는 V-World 를 직접 부른다.
-#  PROXY_URL 로 쓰는 Vercel 프록시는 경로를 버리고 항상 /req/data 로 중계하기 때문에
-#  /ned/data/... 를 붙여도 "PARAM_REQUIRED: 필수 파라미터인 request가 없습니다" 가 돌아온다.
-#  WFS(cadastral.py)는 그 프록시가 맞으므로 그대로 두고, 여기만 분리한다
-VWORLD_API_URL = os.getenv("VWORLD_API_URL", "https://api.vworld.kr")
-
 #V-World 데이터 API 세션
 VWORLD_SESSION = requests.Session()
 VWORLD_SESSION.mount(
@@ -161,7 +155,7 @@ async def set_cached_land(pnu: str, data: dict):
 #부동산 계산식 API 라우터
 async def fetch_land_price_per_m2(pnu: str) -> int:
     try:
-        url = VWORLD_API_URL + "/ned/data/getIndvdLandPrice"
+        url = PROXY_URL + "/ned/data/getIndvdLandPrice"
 
         #numOfRows 를 주지 않으면 기본 10건만 와서 최신 연도가 잘린다.
         #  pageNo 가 없으면 numOfRows 가 무시되므로 둘을 함께 넘긴다
@@ -209,7 +203,7 @@ async def fetch_land_characteristics(pnu: str) -> dict:
     
     try:
         time.sleep(VWORLD_CALL_GAP)
-        url = VWORLD_API_URL + "/ned/data/getLandCharacteristics"
+        url = PROXY_URL + "/ned/data/getLandCharacteristics"
         #numOfRows·pageNo 를 함께 넘겨야 연도별 이력이 다 온다.
         #  없으면 기본 10건만 와서 최신 공시지가 대신 과거 값이 잡힌다
         params = {
