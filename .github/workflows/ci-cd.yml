@@ -32,8 +32,8 @@ jobs:
       - name: Type Check & Linting
         run: |
           cd frontend
-          npm run lint --if-present
-          npx tsc --noEmit --if-present
+          npm run lint
+          npm run typecheck
 
       - name: Build Test (With Dummy Env)
         env:
