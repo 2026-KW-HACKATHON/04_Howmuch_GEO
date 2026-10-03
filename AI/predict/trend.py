@@ -135,14 +135,21 @@ def index_at(ym: str, index: dict[str, float], annual_rate: float | None = None)
     points = sorted((months(k), float(v)) for k, v in index.items())
     target = months(key)
 
+    rate = annual_rate if annual_rate is not None else estimate_annual_rate(index).annual_rate
+
+    #표보다 이전 : 연율로 거꾸로 되돌린다.
+    #  첫 값을 그대로 돌려주면 2010년 계약을 표 시작연도(2020년) 물가로 치게 된다.
+    #  그러면 2010·2016·2017년 사례가 전부 같은 배수로 보정되어 과거 사례가 과소평가된다.
+    #  역산도 정확하진 않지만(실제보다 낮게 나온다) 첫 값 고정보다는 낫다.
+    #  ※ 지수표를 과거까지 채우면 이 분기를 타지 않는다 — 그게 정답이다
     if target <= points[0][0]:
-        return points[0][1]
+        m_first, v_first = points[0]
+        return v_first / (1 + rate) ** ((m_first - target) / 12)
 
     for (m0, v0), (m1, v1) in zip(points, points[1:]):
         if m0 <= target <= m1:
             return v0 + (v1 - v0) * (target - m0) / (m1 - m0)
 
-    #표 밖 : 공통 규칙으로 뽑은 연율로 연장한다
+    #표 밖(이후) : 공통 규칙으로 뽑은 연율로 연장한다
     m_last, v_last = points[-1]
-    rate = annual_rate if annual_rate is not None else estimate_annual_rate(index).annual_rate
     return v_last * (1 + rate) ** ((target - m_last) / 12)
