@@ -31,3 +31,9 @@ export async function userLogout(): Promise<any> {
     const response = await api.post('/api/v1/user/logout');
     return response.data;
 }
+
+//사용자 정보 조회 API HTTP Handler
+export async function userInfo(): Promise<any> {
+    const response = await api.get('/api/v1/user/info');
+    return response.data;
+}

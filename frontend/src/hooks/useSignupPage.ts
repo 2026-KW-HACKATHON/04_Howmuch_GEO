@@ -9,6 +9,7 @@ export const useSignupPage = () => {
     const [userName, setUserName] = useState<string>('');
     const [password, setPassword] = useState<string>('');
     const [passwordCheck, setPasswordCheck] = useState<string>('');
+    const [signupAttempted, setSignupAttempted] = useState<boolean>(false);
     
     const isPasswordValid = password.trim() !== '' && passwordCheck.trim() !== '' && passwordCheck === password;
     const isFormValid = isVerified && email.trim() !== '' && userName.trim() !== '' && isPasswordValid;
@@ -25,6 +26,8 @@ export const useSignupPage = () => {
     const signupButtonAction = async (e: React.FormEvent<HTMLButtonElement>) => {
         try {
 
+            setSignupAttempted(true);
+
             e.preventDefault();
 
             const userData = {
@@ -36,7 +39,7 @@ export const useSignupPage = () => {
             const response = await userSignup(userData);
 
             alert("회원가입에 성공했습니다. 다시 로그인해주세요.");
-            navigate("/");
+            navigate("/login");
 
         } catch(err : any) {
             if(err.response.status === 409) {
@@ -60,6 +63,7 @@ export const useSignupPage = () => {
         setPasswordCheck,
         signupButtonAction,
         isFormValid,
-        isPasswordValid
+        isPasswordValid,
+        signupAttempted
     };
 }

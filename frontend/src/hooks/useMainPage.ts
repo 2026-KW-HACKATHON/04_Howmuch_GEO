@@ -2,6 +2,7 @@ import { getVWorldCadastral } from '../api/cadastral_api';
 import { getZoneInfo, getContributionInfo } from '../api/realestate_api';
 import { ParcelInfo } from '../utils/parcel';
 import { useCallback, useState, useEffect } from 'react';
+import { userLogout, userInfo } from '../api/user_api';
 
 //MainPage Hook
 export const useMainPage = () => {
@@ -9,17 +10,47 @@ export const useMainPage = () => {
     const [isVerified, setIsVerified] = useState<boolean>(false);
     const [selectedPnus, setSelectedPnus] = useState<string[]>([]);
 
+    const [userName, setUserName] = useState<string>('');
+    const [userEmail, setUserEmail] = useState<string>('');
+
     //선택 필지의 면적·공시지가 (지적도 응답에서 뽑은 값)
     const [selectedParcels, setSelectedParcels] = useState<ParcelInfo[]>([]);
-    
+
     //로그인 되어있는지 확인
     useEffect(() => {
-        const token = localStorage.getItem('token');
-        if (!token) {
-            alert("로그인이 필요합니다.");
-            window.location.href = "/login";
-        }
+        checkLoginStatus();
     }, []);
+
+    //로그인 상태 확인
+    const checkLoginStatus = async () => {
+        try {
+            const response = await userInfo();
+            if (response && response.user_name && response.email) {
+                setUserName(response.user_name);
+                setUserEmail(response.email);
+            } else {
+                alert("계정 정보에 오류가 생겼습니다. 다시 로그인해주세요.");
+                window.location.href = "/login";
+            }
+        } catch (err: any) {
+            if (err.response && err.response.status === 401) {
+                alert("로그인이 필요합니다.");
+                window.location.href = "/login";
+            }
+        }
+    };
+
+    //로그아웃 버튼 클릭시 로그아웃 처리
+    const logoutButtonAction = async () => {
+        try {
+            await userLogout();
+            alert("정상적으로 로그아웃 되었습니다.");
+            window.location.href = "/login";
+        } catch (err) {
+            console.error("[ logoutButtonAction 오류 발생 ] : ", err);
+            alert("로그아웃 중 오류가 발생했습니다. 다시 시도해주세요.");
+        }
+    }
 
 
     //선택 필지 갱신 Handler
@@ -86,6 +117,9 @@ export const useMainPage = () => {
         handleCaptchaChange,
         handleCadastralData,
         handleZoneData,
-        handleContributionData
+        handleContributionData,
+        logoutButtonAction,
+        userName,
+        userEmail
     };
 }

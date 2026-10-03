@@ -14,7 +14,8 @@ export default function SignupPage() {
         setPasswordCheck,
         signupButtonAction,
         isFormValid,
-        isPasswordValid
+        isPasswordValid,
+        signupAttempted
     } = useSignupPage();
 
     return (
@@ -39,14 +40,14 @@ export default function SignupPage() {
                     placeholder="비밀번호"
                     onChange={(e)=>setPassword(e.target.value)}
                     className={`mb-4 w-full rounded-lg border border-gray-300 px-4 py-2 ${
-                        !isPasswordValid ? 'border-red-500' : 'focus:border-blue-500'} focus:outline-none`}
+                        !isPasswordValid && signupAttempted ? 'border-red-500' : 'focus:border-blue-500'} focus:outline-none`}
                 />
                 <input
                     type="password"
                     placeholder="비밀번호 확인"
                     onChange={(e)=>setPasswordCheck(e.target.value)}
                     className={`mb-4 w-full rounded-lg border border-gray-300 px-4 py-2 ${
-                        !isPasswordValid ? 'border-red-500' : 'focus:border-blue-500'} focus:outline-none`}
+                        !isPasswordValid && signupAttempted ? 'border-red-500' : 'focus:border-blue-500'} focus:outline-none`}
                 />
                 <ReCAPTCHA
                     sitekey= {import.meta.env.VITE_GOOGLE_RECAPTCHA_API}
@@ -55,8 +56,8 @@ export default function SignupPage() {
                 <button
                     type="submit"
                     className={`mb-4 w-full rounded-lg ${
-                        isFormValid ? 'bg-blue-600' : 'bg-gray-400'
-                    } px-4 py-2 text-white font-semibold transition hover:bg-blue-700 focus:outline-none`}
+                        isFormValid ? 'bg-blue-600 hover:bg-blue-700 focus:outline-none' : 'bg-gray-400 hover:bg-gray-400 focus:outline-none'
+                    } px-4 py-2 text-white font-semibold transition`}
                     disabled={!isFormValid}
                     onClick={signupButtonAction}
                 >
@@ -66,7 +67,7 @@ export default function SignupPage() {
             <p className="text-gray-600 mb-4">이미 계정이 있으신가요?</p>
             <button
                 type="button"
-                onClick={() => window.location.href = '/signup'}
+                onClick={() => window.location.href = '/login'}
                 className="rounded-lg bg-blue-600 px-4 py-2 text-white font-semibold transition hover:bg-blue-700"
             >
                 로그인

@@ -22,6 +22,5 @@ class UserSignUpRequest(BaseModel):
 class UserLoginRequest(BaseModel):
 
     #사용자 입력 데이터 검증을 위한 Pydantic 모델 정의
-    email: EmailStr = Field(..., description="이메일 주소")
     user_name: str = Field(..., description="아이디")
     password: str = Field(..., min_length=5, description="비밀번호 입력")

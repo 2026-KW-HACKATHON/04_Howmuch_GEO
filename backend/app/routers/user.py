@@ -107,3 +107,33 @@ def logout_user_handler(request: Request):
     #세션에서 사용자 ID 제거
     request.session.clear()
     return {"message":"로그아웃에 성공했습니다."}
+
+#사용자 정보 조회 API 엔드포인트
+@router.get(
+    "/user/info",
+    status_code = status.HTTP_200_OK
+)
+def get_user_info_handler(request: Request, session: Session = Depends(get_db)):
+
+    #로그인 상태 확인
+    if "user_id" not in request.session:
+        raise UnauthorizedException("로그인 상태가 아닙니다.")
+
+    user_id = request.session["user_id"]
+
+    #사용자 정보 조회
+    user = session.execute(
+        select(User).where(
+            User.user_id == user_id
+        )
+    ).scalar_one_or_none()
+
+    #사용자가 존재하지 않으면 UnauthorizedException 발생
+    if not user:
+        raise UnauthorizedException("사용자를 찾을 수 없습니다.")
+
+    return {
+        "user_id": user.user_id,
+        "user_name": user.user_name,
+        "email": user.email
+    }

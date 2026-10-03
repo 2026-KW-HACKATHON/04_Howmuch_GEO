@@ -38,30 +38,31 @@ const KakaoMap: React.FC<KakaoMapProps> = ({ onLoadCadastralData, onSelectionCha
 
     return (
         <div className="w-full h-screen relative">
-
-            {/* 우측 상단 드래그 기능 토글 영역 */}
-            <div className="absolute top-4 right-4 z-10 bg-white p-2 rounded shadow-md flex gap-2 items-center">
-                <button
-                    onClick={() => setIsDragSelectMode(!isDragSelectMode)}
-                    className={`px-3 py-1.5 rounded text-sm font-semibold transition-colors ${
-                        isDragSelectMode 
-                            ? 'bg-blue-600 text-white' 
-                            : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                    }`}
-                >
-                    {isDragSelectMode ? '드래그 모드' : '일반 이동 모드'}
-                </button>
-                <button
-                    onClick={() => setSelectedPnus([])}
-                    className="px-3 py-1.5 bg-red-100 text-red-600 rounded text-sm font-semibold hover:bg-red-200"
-                >
-                    선택 초기화
-                </button>
-            </div>
-
             {/* 지도 DOM 컨테이너 */}
             <div ref={mapRef} className="w-full h-full" />
-            <MapLegend />
+            <div className="absolute bottom-6 right-6 z-10 flex flex-col items-end gap-2">
+                <MapLegend />
+                <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white/95 p-2 shadow-xl backdrop-blur-md">
+                    <button
+                        type="button"
+                        onClick={() => setIsDragSelectMode(!isDragSelectMode)}
+                        className={`rounded px-3 py-1.5 text-sm font-semibold transition-colors ${
+                            isDragSelectMode
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                        }`}
+                    >
+                        {isDragSelectMode ? '드래그 모드' : '일반 이동 모드'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setSelectedPnus([])}
+                        className="rounded bg-red-100 px-3 py-1.5 text-sm font-semibold text-red-600 hover:bg-red-200"
+                    >
+                        선택 초기화
+                    </button>
+                </div>
+            </div>
         </div>
     );
 };

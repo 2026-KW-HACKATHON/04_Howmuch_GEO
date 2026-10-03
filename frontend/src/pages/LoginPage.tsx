@@ -11,7 +11,8 @@ export default function LoginPage() {
         handleCaptchaChange,
         setUserName,
         setPassword,
-        isFormValid
+        isFormValid,
+        loginAttempted
     } = useLoginPage();
 
     return (
@@ -23,13 +24,15 @@ export default function LoginPage() {
                     type="email"
                     placeholder="아이디"
                     onChange={(e)=>setUserName(e.target.value)}
-                    className="mb-4 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-blue-500 focus:outline-none"
+                    className={`mb-4 w-full rounded-lg border border-gray-300 px-4 py-2 ${
+                        loginAttempted ? 'border-red-500' : 'focus:border-blue-500'} focus:outline-none`}
                 />
                 <input
                     type="password"
                     placeholder="비밀번호"
                     onChange={(e)=>setPassword(e.target.value)}
-                    className="mb-4 w-full rounded-lg border border-gray-300 px-4 py-2 focus:border-blue-500 focus:outline-none"
+                    className={`mb-4 w-full rounded-lg border border-gray-300 px-4 py-2 ${
+                        loginAttempted ? 'border-red-500' : 'focus:border-blue-500'} focus:outline-none`}
                 />
                 <ReCAPTCHA
                     sitekey= {import.meta.env.VITE_GOOGLE_RECAPTCHA_API}
@@ -40,7 +43,7 @@ export default function LoginPage() {
                     disabled={!isFormValid}
                     onClick={loginButtonAction}
                     className={`mb-4 w-full rounded-lg ${
-                        isFormValid ? 'bg-blue-600' : 'bg-gray-400'
+                        isFormValid ? 'bg-blue-600 hover:bg-blue-700 focus:outline-none' : 'bg-gray-400 hover:bg-gray-400 focus:outline-none'
                     } px-4 py-2 text-white font-semibold transition hover:bg-blue-700`}
                 >
                     로그인
