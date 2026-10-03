@@ -1,92 +1,46 @@
 /// <reference types="vite/client" />
 
-import { useCallback, useState } from 'react';
 import KakaoMap from "../components/KakaoMap"
 import SideBar from '../components/SideBar';
 import ModelPredictForm from '../components/ModelPredictForm';
-import { getVWorldCadastral } from '../api/cadastral_api';
-import { getZoneInfo, getContributionInfo } from '../api/realestate_api';
-import { ParcelInfo } from '../utils/parcel';
 import ReCAPTCHA from 'react-google-recaptcha';
+import { useMainPage } from '../hooks/useMainPage';
 
-//메인
-function App() {
-    const [isOpen, setIsOpen] = useState<boolean>(true);
-    const [isVerified, setIsVerified] = useState<boolean>(false);
-    const [selectedPnus, setSelectedPnus] = useState<string[]>([]);
+//메인 페이지
+export default function MainPage() {
 
-    //선택 필지의 면적·공시지가 (지적도 응답에서 뽑은 값)
-    const [selectedParcels, setSelectedParcels] = useState<ParcelInfo[]>([]);
+    //MainPage Hook 사용
+    const {
+        isOpen,
+        isVerified,
+        selectedPnus,
+        selectedParcels,
+        handleSelectionChange,
+        toggleSidebar,
+        handleCaptchaChange,
+        handleCadastralData,
+        handleZoneData,
+        handleContributionData
+    } = useMainPage();
 
-    //선택 필지 갱신 Handler
-    //  같은 필지 목록이면 상태를 그대로 둔다. 매번 새 배열을 넣으면 렌더가 무한히 반복된다
-    const handleSelectionChange = useCallback((pnus: string[], parcels: ParcelInfo[]) => {
-        setSelectedPnus((prev) => (prev.join(',') === pnus.join(',') ? prev : pnus));
-        setSelectedParcels((prev) =>
-            prev.map((p) => p.pnu).join(',') === parcels.map((p) => p.pnu).join(',') ? prev : parcels
-        );
-    }, []);
-
-    //사이드바 토글시 isOpen 값 전환
-    const toggleSidebar = () => {
-        setIsOpen(!isOpen);
-    };
-
-    //ReCaptcha Handler
-    const handleCaptchaChange = (token: string | null) => {
-        if (token) {
-            setIsVerified(true);
-        }
-    };
-
-    //필지 정보 API 호출 Handler
-    const handleCadastralData = useCallback(async (geomFilter?: any) => {
-        try {
-            const response = await getVWorldCadastral(geomFilter);
-            return response;
-        } catch (err){
-            console.log("[ handleCadastralData 오류 발생 ] : ", err);
-            throw err;
-        }
-    }, []);
-
-    //Zone 데이터 API 호출 Handler
-    const handleZoneData = useCallback(async (pnus: string[]) => {
-        try {
-            const response = await getZoneInfo(pnus, { parcels: selectedParcels });
-            return response;
-        } catch (err){
-            console.log("[ handleZoneData 오류 발생 ] : ", err);
-            throw err;
-        }
-    }, [selectedParcels]);
-
-    //Contribution 데이터 API 호출 Handler
-    const handleContributionData = useCallback(async (requestData: any) => {
-        try {
-            const response = await getContributionInfo(requestData);
-            return response;
-        } catch (err) {
-            console.log("[ handleContributionData 오류 발생 ] : ", err);
-            throw err;
-        }
-    }, []);
-
+    //메인 페이지 렌더링
     return (
         <div className="relative w-screen h-screen overflow-hidden">
 
-            {/* ReCaptcha V2 를 사용하여 트레픽 관리 */}
+            {/* 사용자 인증 창 */}
             {!isVerified ? (
 
-                //ReCaptcha 인증 전 화면
+                //사용자 인증 전 화면
                 <div className="flex flex-col items-center justify-center h-full bg-gray-100">
+                    <h1 className="text-2xl font-bold mb-4">사용자 인증</h1>
+                    <p className="text-gray-600 mb-8">서비스를 이용하기 위해서는 사용자 인증이 필요합니다.</p>
                     <ReCAPTCHA
                         sitekey= {import.meta.env.VITE_GOOGLE_RECAPTCHA_API}
                         onChange={handleCaptchaChange}
                     />
                 </div>
             ) : (
-                //ReCaptcha 인증 후 화면
+                //사용자 인증 후 화면
                 <>
                 
                     {/* 카카오 맵 영역 */}
@@ -108,5 +62,3 @@ function App() {
         </div>
     );
 };
-
-export default App
