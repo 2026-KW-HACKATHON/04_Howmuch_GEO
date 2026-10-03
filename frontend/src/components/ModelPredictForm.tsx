@@ -40,7 +40,7 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
     const canCalculate = selectedPnus.length > 0 && !!selectedZoning && !loading;
 
     //조합원 수는 슬라이더 값을 쓰고, 아직 없으면 폼 기본값을 쓴다
-    const memberCount = sliderData.member_count?.value ?? formData.member_count;
+    const memberCount = Number(sliderData.member_count?.value ?? formData.member_count);
     const metrics = buildMetrics(zoneInfo, calcResult, sliderData, memberCount);
 
     return (
