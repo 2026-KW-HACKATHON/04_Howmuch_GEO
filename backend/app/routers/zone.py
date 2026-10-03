@@ -5,12 +5,13 @@ from typing import List, Optional
 from app.config.engine_defaults import ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS, MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
 from app.utils.slider_builder import build_sliders
 from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
-from AI.engine.zone import build_zone_summary
+from AI.engine.zone import SELECTABLE_ZONING, build_zone_summary
 from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
 from AI.predict.construction_cost import predict_cost_per_pyeong
-from AI.predict.sale_price import fetch_trades, predict_sale_price_per_m2
+from AI.predict.sale_price import Trade, fetch_trades, predict_sale_price_per_m2
 from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
 from dotenv import load_dotenv
+from dataclasses import is_dataclass, asdict
 import os
 import requests
 import time
@@ -18,6 +19,11 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from app.core.redis import redis_client
 import json
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+#스레드풀 생성
+executor = ThreadPoolExecutor(max_workers=10)
 
 #부동산 계산식 API 라우터 설정
 router = APIRouter(
@@ -45,34 +51,50 @@ VWORLD_SESSION.mount(
     ),
 )
 
-#호출 간격(초). 쉬지 않고 던지면 서버가 연결을 끊어 재시도 대기가 붙고 오히려 느려진다
+#호출 간격(초)
 VWORLD_CALL_GAP = 0.05
 
-#실거래 조회 기간(개월). 분양가 시점 보정에 쓰는 월 상승률을 여기서 구한다
+#실거래 조회 기간(개월)
 TRADE_MONTHS = 12
 
 #Redis 를 통한 Trade 캐시 불러오기
 async def get_cached_trades(lawd_cd: str, target_ym: str) -> Optional[list]:
     if not redis_client:
         return None
-    cache_key = f"trade:{lawd_cd}:{target_ym}"
     try:
-        val = await redis_client.get(cache_key)
-        print("[ Log ] : Get from cache")
-        if val:
-            return json.loads(val)
+        data = await redis_client.get(f"trades:{lawd_cd}:{target_ym}")
+        if data:
+            raw_list = json.loads(data)
+            return [Trade(**item) if isinstance(item, dict) else item for item in raw_list]
+        return None
     except Exception as e:
         print(f"[Warning] Redis Read Error (Trade): {e}")
-    return None
+        return None
 
 #Redis 를 통한 Trade 캐시 저장
 async def set_cached_trades(lawd_cd: str, target_ym: str, trades: list):
-    if not redis_client:
+    if not redis_client or not trades:
         return
-    cache_key = f"trade:{lawd_cd}:{target_ym}"
     try:
-        await redis_client.setex(cache_key, 86400, json.dumps(trades))
-        print("[ Log ] : Save cache")
+        # Pydantic v2 / Pydantic v1 / Dataclass / 일반 dict 모두 대응하는 직렬화
+        trades_dict = []
+        for trade in trades:
+            if hasattr(trade, "model_dump"):  # Pydantic v2
+                trades_dict.append(trade.model_dump())
+            elif hasattr(trade, "dict"):  # Pydantic v1
+                trades_dict.append(trade.dict())
+            elif is_dataclass(trade):  # @dataclass
+                trades_dict.append(asdict(trade))
+            elif isinstance(trade, dict):  # 이미 dict인 경우
+                trades_dict.append(trade)
+            elif hasattr(trade, "__dict__"):  # 일반 Custom Class
+                trades_dict.append(trade.__dict__)
+            else:
+                trades_dict.append(str(trade))
+
+        serialized_data = json.dumps(trades_dict, ensure_ascii=False)
+        print("[ Log ] : Save cache (Trade)")
+        await redis_client.set(f"trades:{lawd_cd}:{target_ym}", serialized_data, ex=86400)
     except Exception as e:
         print(f"[Warning] Redis Write Error (Trade): {e}")
 
@@ -85,7 +107,7 @@ async def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
     if cached is not None:
         return cached
 
-    #target_ym 이전 TRADE_MONTHS 개월
+    # target_ym 이전 TRADE_MONTHS 개월
     year, month = (int(v) for v in target_ym.split("-"))
     ym_list = []
     for step in range(TRADE_MONTHS):
@@ -93,12 +115,14 @@ async def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
         ym_list.append(f"{total // 12}-{total % 12 + 1:02d}")
 
     try:
-        trades = fetch_trades(lawd_cd, ym_list)
+        loop = asyncio.get_event_loop()
+        trades = await loop.run_in_executor(executor, fetch_trades, lawd_cd, ym_list)
     except Exception as e:
         print(f"[Warning] 실거래가 조회 실패 {lawd_cd}: {e}")
         return []
 
-    set_cached_trades(lawd_cd, target_ym, trades)
+    if trades:
+        await set_cached_trades(lawd_cd, target_ym, trades)
     return trades
 
 #Redis 를 통한 Land 캐시 불러오기
@@ -108,8 +132,8 @@ async def get_cached_land(pnu: str) -> Optional[dict]:
     cache_key = f"land:{pnu}"
     try:
         val = await redis_client.get(cache_key)
-        print("[ Log ] : Get from cache")
         if val:
+            print("[ Log ] : Get from cache (Land)")
             return json.loads(val)
     except Exception as e:
         print(f"[Warning] Redis Read Error (Land): {e}")
@@ -117,12 +141,14 @@ async def get_cached_land(pnu: str) -> Optional[dict]:
 
 #Redis 를 통한 Land 캐시 저장하기
 async def set_cached_land(pnu: str, data: dict):
-    if not redis_client:
+    if not redis_client or not data:
         return
     cache_key = f"land:{pnu}"
     try:
-        await redis_client.setex(cache_key, 604800, json.dumps(data))
-        print("[ Log ] : Save cache")
+        # Land 객체 내 Pydantic/Dataclass가 포함된 경우 대비 ensure_ascii=False 처리
+        serialized_data = json.dumps(data, ensure_ascii=False, default=str)
+        await redis_client.setex(cache_key, 604800, serialized_data)
+        print("[ Log ] : Save cache (Land)")
     except Exception as e:
         print(f"[Warning] Redis Write Error (Land): {e}")
 
@@ -131,18 +157,31 @@ async def fetch_land_price_per_m2(pnu: str) -> int:
     try:
         url = PROXY_URL + "/ned/data/getIndvdLandPrice"
 
+        #numOfRows 를 주지 않으면 기본 10건만 와서 최신 연도가 잘린다.
+        #  pageNo 가 없으면 numOfRows 가 무시되므로 둘을 함께 넘긴다
         params = {
             "key": VWORLD_API_KEY,
             "pnu": pnu,
-            "format": "json"
+            "format": "json",
+            "domain": VWORLD_DOMAIN,
+            "numOfRows": 30,
+            "pageNo": 1,
         }
-        
+
         response = VWORLD_SESSION.get(url, params=params, timeout=5)
         data = response.json()
 
-        price_info = data.get("indvdLandPrices", {}).get("field", {})
-        price = price_info.get("pblntfPclnd")
+        rows = data.get("indvdLandPrices", {}).get("field", [])
+        if isinstance(rows, dict):
+            rows = [rows]
+
+        #연도별 이력이 오므로 가장 최근 기준연도를 쓴다
+        price = None
+        if rows:
+            latest = max(rows, key=lambda row: str(row.get("stdrYear", "")))
+            price = latest.get("pblntfPclnd")
         
+        print(f"[ Log ] : Land Price for PNU {pnu} is {price}")
         return int(price) if price else 0
     except Exception as e:
         print(f"[Warning] get_land_price_per_m2 오류 (Price): {e}")
@@ -165,11 +204,15 @@ async def fetch_land_characteristics(pnu: str) -> dict:
     try:
         time.sleep(VWORLD_CALL_GAP)
         url = PROXY_URL + "/ned/data/getLandCharacteristics"
+        #numOfRows·pageNo 를 함께 넘겨야 연도별 이력이 다 온다.
+        #  없으면 기본 10건만 와서 최신 공시지가 대신 과거 값이 잡힌다
         params = {
             "key": VWORLD_API_KEY,
             "pnu": pnu,
             "format": "json",
-            "domain": VWORLD_DOMAIN
+            "domain": VWORLD_DOMAIN,
+            "numOfRows": 30,
+            "pageNo": 1,
         }
         response = VWORLD_SESSION.get(url, params=params, timeout=5)
         data = response.json()
@@ -196,7 +239,7 @@ async def fetch_land_characteristics(pnu: str) -> dict:
             "land_price_per_m2": price,
             "fallback": False,
         }
-        set_cached_land(pnu, result)
+        await set_cached_land(pnu, result)
         return result
         
     except Exception as e:
@@ -233,12 +276,18 @@ async def get_zone(req: ZoneRequest):
             else:
                 price = land_data["land_price_per_m2"] or await fetch_land_price_per_m2(p)
 
+            #용도지역 : 사용자가 고른 값이 있으면 그것을 전 필지에 적용한다.
+            #  용적률 범위(far_min~far_max)가 여기서 정해지고, 그게 슬라이더 범위가 된다.
+            #  조회값을 그대로 쓰면 한 구역에 여러 용도지역이 섞여 가중평균이 되는데,
+            #  정비계획에서 용도지역을 새로 정하는 사업 성격과 맞지 않는다
+            zoning = req.zoning or land_data["zoning"]
+
             parcels.append(
                 ParcelInfo(
-                    pnu=p, 
-                    area_m2=area_m2, 
-                    land_price_per_m2=price, 
-                    zoning=land_data["zoning"], 
+                    pnu=p,
+                    area_m2=area_m2,
+                    land_price_per_m2=price,
+                    zoning=zoning,
                     land_category=land_data["land_category"]
                 )
             )
@@ -246,10 +295,11 @@ async def get_zone(req: ZoneRequest):
         target_ym = req.target_ym or datetime.now().strftime("%Y-%m")
         zone = build_zone_summary(parcels)
 
-        if failed_pnus:
+        #사용자가 용도지역을 직접 골랐으면 조회 실패는 용적률에 영향을 주지 않는다
+        if failed_pnus and not req.zoning:
             zone.warnings.append(
                 f"{len(failed_pnus)}개 필지의 용도지역을 불러오지 못해 제2종일반주거지역으로 가정했습니다. "
-                "용적률이 실제와 다를 수 있습니다."
+                "용적률이 실제와 다를 수 있습니다. 용도지역을 직접 선택하면 이 가정을 덮어씁니다."
             )
 
         #공사비와 분양가는 같은 시점으로 예측한다. 시점이 어긋나면 비례율이 크게 왜곡된다
@@ -257,6 +307,7 @@ async def get_zone(req: ZoneRequest):
 
         #분양가 : 인근 분양 사례 + 실거래 추세 보정 (PNU 앞 5자리 = 시군구 코드)
         lawd_cd = zone.pnus[0][:5] if zone.pnus else ""
+        print(f"[Check] lawd_cd 값: '{lawd_cd}' (Type: {type(lawd_cd)})")
         trades = await fetch_recent_trades(lawd_cd, target_ym) if lawd_cd else []
         sale = predict_sale_price_per_m2(target_ym, trades=trades, region=zone.region)
 
@@ -269,6 +320,9 @@ async def get_zone(req: ZoneRequest):
         "zone": asdict(zone),
         "far_base": zone.far_min,
         "target_ym": target_ym,
+        #프론트 용도지역 버튼 목록. 엔진 FAR_TABLE 과 어긋나지 않게 서버가 내려준다
+        "zoning_options": SELECTABLE_ZONING,
+        "selected_zoning": req.zoning,
         "sliders": build_sliders(zone, cost, req.household_count, sale=sale),
         "cost_prediction": asdict(cost),
         "sale_prediction": asdict(sale),

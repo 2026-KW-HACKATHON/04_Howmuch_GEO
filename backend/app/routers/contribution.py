@@ -2,7 +2,13 @@ from dataclasses import asdict
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from typing import List, Optional
-from app.config.engine_defaults import ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS, MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
+from app.config.engine_defaults import (
+    DEFAULT_PROJECT_PERIOD_YEARS,
+    ENGINE_DEFAULTS,
+    ENGINE_DEFAULTS_FOR_PARAMS,
+    MEMBER_COUNT_UNKNOWN_MIN_RATIO,
+    UNIT_MIX,
+)
 from app.utils.slider_builder import build_sliders
 from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
 from AI.engine.zone import build_zone_summary
@@ -55,6 +61,25 @@ TRADE_MONTHS = 12
     summary="조합원 개인 분담금 및 사업성 계산")
 async def get_contribution(req: ContributionRequest):
     try:
+        sliders = dict(req.sliders)
+
+        #감정평가 보정률은 ProjectParams 의 필드가 아니라 종전자산 환산에만 쓴다.
+        #  슬라이더에서 뺐으므로 평소에는 ENGINE_DEFAULTS 의 고정값(1.543)이 쓰인다
+        appraisal_ratio = sliders.pop("appraisal_ratio", ENGINE_DEFAULTS["appraisal_ratio"])
+
+        #사업 기간도 ProjectParams 의 필드가 아니다.
+        #  공사비·분양가를 어느 시점으로 밀지 정하는 값이라 예측 모델 쪽에서 쓴다 (target_ym)
+        period_years = sliders.pop("project_period_years", DEFAULT_PROJECT_PERIOD_YEARS)
+
+        #종전자산 총액 : 선택 구역 공시지가 총액 × 보정률. 개인 종전자산과 같은 근거를 쓴다
+        #  같은 보정률이 분자·분모에 들어가 분담금에서 약분되므로 이 값의 오차는 비례율 표시만 좌우한다
+        if not req.land_value_total:
+            raise HTTPException(
+                status_code=400,
+                detail="구역 공시지가 총액이 없습니다. 지도에서 필지를 선택한 뒤 다시 계산해 주세요.",
+            )
+        total_prior_asset = req.land_value_total * appraisal_ratio
+
         params = ProjectParams(
             name=req.name,
             project_type=ProjectType.REDEVELOPMENT,
@@ -62,21 +87,22 @@ async def get_contribution(req: ContributionRequest):
             member_count=req.member_count,
             unit_mix_list=[UnitMix(**m) for m in UNIT_MIX],
             far_base=req.far_base,
-            **req.sliders,
+            total_prior_asset=total_prior_asset,
+            **sliders,
             **ENGINE_DEFAULTS_FOR_PARAMS,
         )
         
         #조합원 종전자산 : 공시가격을 직접 받지 않으면 선택 구역 공시지가의 1인분으로 추정한다
+        #  1인분으로 두면 구역 평균 조합원이 되어 분담금이 구역 평균값으로 나온다.
+        #  내 필지를 지정하면 그 필지 공시가격이 들어와 개인화된다
         if req.owner.official_price is not None:
             prior_asset_kwargs = {"official_price": req.owner.official_price}
-        elif req.land_value_total:
-            prior_asset_kwargs = {"official_price": req.land_value_total / max(req.member_count, 1)}
         else:
-            prior_asset_kwargs = {"appraisal_value": ENGINE_DEFAULTS["avg_prior_asset"]}
+            prior_asset_kwargs = {"official_price": req.land_value_total / max(req.member_count, 1)}
 
         owner = OwnerInput(
             desired_unit=req.owner.desired_unit,
-            appraisal_ratio=ENGINE_DEFAULTS["appraisal_ratio"],
+            appraisal_ratio=appraisal_ratio,
             **prior_asset_kwargs,
         )
 

@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+
+from AI.engine.rental_cost import DEFAULT_FLOOR_BAND
 from enum import Enum
 
 PER_PYEONG_TO_PER_M2 = 1 / 3.3058
@@ -32,24 +34,26 @@ class ProjectParams:
     # 규모
     site_area_m2 : float        # 정비구역 면적 (L1)
     floor_area_ratio: float     # 용적률(%) (L2)
-    underground_ratio: float    # 지하 연면적 / 지상 연면적 (L1)
+    parking_per_household: float  # 세대당 주차대수. 지하 연면적을 결정한다 (L2)
 
     # 분양
     member_count: int                   # 조합원 수 (L1)
     general_price_per_m2 : float        # 제곱 당 일반 분양가(만원) (L2/L3)
     member_price_ratio : float          # 조합원 분양가(일반분양가 대비 비율) (L2)
-    rental_price_per_unit : float = 0.0 # 임대 세대 당 인수가(만원) (L1)
+    #임대 인수수입 : 도시정비법 제55조에 따라 시·도지사가 표준건축비로 인수한다.
+    #  세대당 정액이 아니라 "임대 공급면적 × 표준건축비" 다 (국토부고시 제2023-64호).
+    #  층수 구간만 사용자가 고르고(노드 슬라이더), 전용면적 구간은 아래 값에서 자동으로 정해진다
+    rental_floor_band : str = DEFAULT_FLOOR_BAND      # 임대동 층수 구간 (L2, 노드 슬라이더)
+    rental_exclusive_area_m2 : float = 39.0           # 임대 1세대 주거전용면적. 표의 행을 고르는 데 쓴다 (L1)
 
     # 비용
     construction_cost_per_pyeong : float    # 평당 공사비(만원) (L2/L3)
     other_cost_ratio : float                # 기타사업비 / 공사비 (L2)
 
     # 종전 자산 총액 : 기본은 입력, 모르면 (조합원 평균 * 조합원 수)
-    total_prior_asset : float | None = None  # 종전자산 총액(만원) (L1)
-    avg_prior_asset : float | None = None    # 조합원 평균 종전자산(만원) (L1/L3)
+    total_prior_asset : float | None = None  # 종전자산 총액(만원). 선택 필지 공시지가 합계에서 환산 (L1→L3)
 
     # 비례율 고정값
-    proportional_rate: float | None = None   # 비례율 고정값(%). None이면 사업 수지로 계산 (L2)
 
     # 임대 (용적률과 연동. 도시정비법 제54조 + 서울시 조례 기준)
     far_base : float                 # 조례 기준 용적률(%). 완화분을 재는 기준점, ZoneSummary.far_min (L1)
@@ -59,8 +63,11 @@ class ProjectParams:
 
     # 상가 및 커뮤니티
     commercial_ratio : float            # 지상 연면적 중 상가 비율 (L2)
-    community_ratio : float             # 커뮤니티(부대시설) 비율 (L1)
-    housing_supply_efficiency : float   # 주택 연면적 → 공급면적 합계 전환율 (L1 가정)
+    #공급면적 전환율 = 1.0.
+    #  공급면적(전용+주거공용)과 건축물대장 주택 연면적이 같은 범위를 재기 때문이다.
+    #  2026-10-02 신축 5개 단지 전유공용면적으로 실측해 100.0~100.6% 를 확인했다.
+    #  (전용률 0.71 과 혼동하지 말 것 — 그건 전용/공급 비율이고 여기는 연면적/공급 비율이다)
+    housing_supply_efficiency : float   # 주택 연면적 → 공급면적 합계 전환율 (L1, 실측 1.0)
     commercial_price_ratio : float      # 상가 분양가 = 일반분양가 × 평균 상가 분양가 (L1 가정)
 
     #UnitMix template
@@ -92,15 +99,17 @@ class ProjectParams:
             )
 
         #상가 + 커뮤니티가 1 이상이면 주택 연면적이 0 이하가 됨
-        non_housing = self.commercial_ratio + self.community_ratio
+        non_housing = self.commercial_ratio
         if not 0 <= non_housing < 1:
             raise ValueError(
-                f"commercial_ratio + community_ratio 는 0 이상 1 미만이어야 합니다: {non_housing}"
+                f"commercial_ratio 는 0 이상 1 미만이어야 합니다: {non_housing}"
             )
 
         #종전자산 총액 : 총액과 평균 중 하나는 있어야 비례율 계산 가능
-        if self.total_prior_asset is None and self.avg_prior_asset is None:
-            raise ValueError("total_prior_asset 또는 avg_prior_asset 중 하나는 필요합니다.")
+        if self.total_prior_asset is None or self.total_prior_asset <= 0:
+            raise ValueError(
+                "total_prior_asset(종전자산 총액)이 필요합니다. 선택 구역의 공시지가 총액에서 환산하세요."
+            )
 
 # 필지 1개당 입력값
 @dataclass
@@ -130,12 +139,18 @@ class OwnerInput:
     desired_unit: str   # UnitType 이름 (84A 등) (L2)
  
     # 종전자산 추정 우선순위: 감정평가액 > 공시가격 > 토지면적×공시지가
-    appraisal_value: float | None = None    # 감정평가액(만원) (L2/L3)
+    #   입력은 모두 L1(API·법정 고정값)이고, 그것으로 계산한 종전자산 평가액이 L3(추정) 이다.
+    appraisal_value: float | None = None    # 감정평가액(만원). 통지서를 받은 조합원이 직접 입력 (L1)
     official_price: float | None = None     # 주택/공동주택 공시가격(만원) (L1)
     land_area_m2: float | None = None       # 토지 지분면적 (L1)
     land_price_per_m2: float | None = None  # 개별공시지가(원/㎡) (L1)
 
-    appraisal_ratio: float                  # 감정평가액 / 공시가격 보정률 (L1)
+    # 공시가격 → 종전자산 환산 배수.
+    #   단일 배수는 개인·구역에 같은 값이 들어가 분담금에서 약분된다(수치 검증됨).
+    #   3번째 모델에서 토지분 + 건물분 분리로 교체 예정 → 그때 이 필드는 토지분 배수(λ)만 맡는다
+    #     토지분 = 토지면적 × 공시지가 × λ,  λ = (1/현실화율 0.648) × 감정평가수준 k
+    #     건물분 = 연면적 × 재조달원가 × 잔존율(법정 잔가율표)
+    appraisal_ratio: float                  # (L1 입력 → L3 결과)
 
 
 #사업 단위 계산 결과
@@ -150,7 +165,6 @@ class ProjectResult:
     total_post_asset : float    # 종후자산 총액(총수입)
     total_prior_asset : float   # 종전자산 총액  
     proportional_rate : float   # 비례율(%)
-    rate_fixed : bool           # True면 입력한 고정값, False면 계산값
 
     warnings : list[str] = field(default_factory=list) # 특정 조건 시 warning 문구 띄움
     

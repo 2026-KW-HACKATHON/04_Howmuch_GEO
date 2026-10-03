@@ -5,10 +5,12 @@ import { ParcelInfo } from '../utils/parcel';
 //  parcels : 선택 필지의 면적·공시지가. 지적도 응답에서 뽑은 값이라 데이터 API 권한이 없어도 쓸 수 있다
 //  targetYm : 공사비·분양가 예측 기준 시점 "YYYY-MM" (착공 예상 연월). 없으면 서버가 현재 연월을 쓴다
 //  householdCount : 구역 세대수. 조합원 수 슬라이더 범위를 만드는 데 쓰인다
+//  zoning : 사용자가 고른 용도지역. 주면 선택 필지 전체에 적용되어 용적률 범위가 정해진다
 export interface ZoneInfoOptions {
     parcels?: ParcelInfo[];
     targetYm?: string;
     householdCount?: number;
+    zoning?: string;
 }
 
 //ZoneInfo API HTTP Handler
@@ -18,6 +20,7 @@ export async function getZoneInfo(pnus: string[], options: ZoneInfoOptions = {})
         parcels: options.parcels,
         target_ym: options.targetYm,
         household_count: options.householdCount,
+        zoning: options.zoning,
     });
     return response.data;
 }

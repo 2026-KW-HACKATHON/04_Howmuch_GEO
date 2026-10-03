@@ -1,5 +1,6 @@
 from dataclasses import dataclass, replace
 
+from AI.engine.rental_cost import standard_build_cost_per_m2
 from AI.engine.schema import(
     PER_PYEONG_TO_PER_M2,
     ProjectParams,
@@ -13,6 +14,13 @@ from AI.engine.schema import(
 )
 
 # 개인 종전자산 (만원)
+#  현재는 "공시가격 × 보정률" 단일 배수. 3번째 모델에서 아래로 교체한다.
+#    종전자산 = 토지분 + 건물분
+#      토지분 = 토지면적 × 공시지가/㎡ × λ              (토지특성 API)
+#      건물분 = 연면적 × 재조달원가 × 잔존율            (건축물대장 + 법정 잔가율표)
+#      집합건물이면 × (내 전유면적 ÷ 건물 전유면적 합계)
+#  단일 배수로 두면 개인·구역에 같은 값이 들어가 분담금에서 약분되므로,
+#  분리해야 "내 건물이 구역 평균보다 덜 낡았나" 가 분담금에 반영된다.
 def estimate_prior_asset(owner: OwnerInput) -> float:
     if owner.appraisal_value is not None:
         return owner.appraisal_value
@@ -26,33 +34,61 @@ def estimate_prior_asset(owner: OwnerInput) -> float:
 @dataclass 
 class Areas:
     ground_m2 : float           # 지상 연면적
-    gross_m2 : float            # 총 연면적 (지상 + 지하)
     housing_total_m2 : float    # 주택 연면적
     supply_total_m2 : float     # 주택 공급면적 합계
     commercial_m2 : float       # 상가 면적
 
 def calc_area(params: ProjectParams) -> Areas:
     ground_m2 = (params.site_area_m2 * params.floor_area_ratio) / 100                     # 지상 연면적
-    gross_m2 = ground_m2 * (1 + params.underground_ratio)                                 # 총 연면적
-    housing_total_m2 = ground_m2 * (1 - params.commercial_ratio - params.community_ratio) # 주택 연면적
-    supply_total_m2 = housing_total_m2 * params.housing_supply_efficiency                 # 공급 면적 합계
+    #주택 연면적 : 커뮤니티는 차감하지 않는다.
+    #  2026-10-02 신축 4개 단지 실측 결과 주민공동시설이 지상에 0~0.56㎡/세대뿐이고 전부 지하였다.
+    #  주택건설기준 제55조의2 의 세대당 2.5㎡ 는 지하에서 충족되므로 지상 연면적에서 뺄 이유가 없다.
+    housing_total_m2 = ground_m2 * (1 - params.commercial_ratio)                           # 주택 연면적
+    supply_total_m2 = housing_total_m2 * params.housing_supply_efficiency                  # 공급 면적 합계
     commercial_m2 = ground_m2 * params.commercial_ratio                                   # 상가 면적
 
-    return Areas(ground_m2, gross_m2, housing_total_m2, supply_total_m2, commercial_m2)
+    return Areas(ground_m2, housing_total_m2, supply_total_m2, commercial_m2)
 
 # 총 사업비
 @dataclass
 class Costs:
     construction_cost_m2 : float    # m2당 공사비 단가
+    underground_m2 : float          # 지하 연면적
+    gross_m2 : float                # 총 연면적 (지상 + 지하)
     construction_cost : float       # 총 공사비
     all_cost : float                # 총 사업비
 
-def calc_construction_cost(params: ProjectParams, areas: Areas) -> Costs:
+
+#지하 1대당 주차면적(㎡). 장위 꿈의숲아이파크 총괄표제부 실측 72,169㎡ ÷ 2,061대 = 35.0
+PARKING_AREA_PER_CAR_M2 = 35.0
+
+#주차장을 뺀 지하 면적을 세대수로 나눈 값(㎡). 기계실·창고·커뮤니티가 들어간다.
+#  같은 단지 실측 (지하 91,217 − 주차 72,169) ÷ 1,711세대 = 11.1
+#  커뮤니티를 지상에서 차감하지 않는 이유가 여기 있다 — 전부 지하에 있다
+UNDERGROUND_ETC_PER_HOUSEHOLD_M2 = 11.1
+
+
+def calc_construction_cost(params: ProjectParams, areas: Areas, alloc: "Allocation") -> Costs:
+    #지하 연면적 : 지상 대비 비율(기존 0.6)이 아니라 세대수 × 주차대수로 쌓는다.
+    #  주차대수가 지하 규모를 결정하므로 사용자가 조절할 수 있는 값이 되어야 한다
+    household_count = sum(u.count for u in alloc.unit_types) + alloc.rental_count
+    underground_m2 = household_count * (
+        params.parking_per_household * PARKING_AREA_PER_CAR_M2
+        + UNDERGROUND_ETC_PER_HOUSEHOLD_M2
+    )
+    gross_m2 = areas.ground_m2 + underground_m2
+
     construction_cost_m2 = params.construction_cost_per_pyeong * PER_PYEONG_TO_PER_M2   # m2당 공사비 단가
-    construction_cost = areas.gross_m2 * construction_cost_m2                           # 총 공사비
+    construction_cost = gross_m2 * construction_cost_m2                                 # 총 공사비
+
+    #기타사업비 : 설계·감리비, 금융비용(이주비 이자), 조합운영비, 보상비, 각종 부담금·세금, 예비비.
+    #  실제 재개발 사례의 총사업비 구성은 공사비 76.9% / 보상비 7.1% / 관리비 9.1% / 기타 6.9% 였다.
+    #  공사비 기준으로 환산하면 23.1 ÷ 76.9 = 0.30. 통상 공사비 비중 70~80% 에 대응하는 범위가
+    #  0.25(공사비 80%) ~ 0.45(공사비 69%) 라서 슬라이더를 그 폭으로 잡았고,
+    #  기본값 0.35 는 공사비 비중 74% 에 해당한다 (사례 76.9% 와 통상 하단 70% 의 사이)
     all_cost = construction_cost * (1 + params.other_cost_ratio)                        # 총 사업비
 
-    return Costs(construction_cost_m2, construction_cost, all_cost)
+    return Costs(construction_cost_m2, underground_m2, gross_m2, construction_cost, all_cost)
 
 # 세대수 배분 (추가 예정)
 @dataclass
@@ -117,7 +153,15 @@ def calc_post_asset(params: ProjectParams, areas: Areas, alloc: Allocation) -> R
     sale_supply_m2 = sum(u.count * u.supply_area_m2 for u in alloc.unit_types)
 
     housing_revenue = sale_supply_m2 * blended_price_m2
-    rental_revenue = alloc.rental_count * params.rental_price_per_unit
+    #임대 인수수입 (도시정비법 제55조) : 세대당 정액이 아니라 공급면적 × 표준건축비.
+    #  표는 전용면적으로 행을 고르고 단가는 공급면적에 곱한다(국토부고시 제2023-64호 주석).
+    rental_supply_m2 = alloc.rental_count * params.rental_supply_area_m2
+    rental_revenue = rental_supply_m2 * standard_build_cost_per_m2(
+        params.rental_floor_band, params.rental_exclusive_area_m2
+    )
+    #상가 분양수입 : 주택 분양가 × 배수. 배수 0.7 은 기존 상가 실거래 0.48 에 신축 프리미엄을 얹은 값
+    #  서울 10개 구 실거래에서 아파트가 비쌀수록 배수가 낮아진다(마포 0.36 / 노원 0.49) → 비례 가정은
+    #  엄밀하지 않다. 상가 ㎡당 분양가 직접 예측으로 전환 예정(상가 수입은 종후자산의 약 5%, 우선순위 낮음)
     commercial_revenue = (
         areas.commercial_m2 * params.general_price_per_m2 * params.commercial_price_ratio
     )
@@ -138,24 +182,16 @@ def calc_project(params: ProjectParams, alloc: Allocation) -> ProjectResult:
     warnings = []
 
     areas = calc_area(params)
-    costs = calc_construction_cost(params, areas)
+    costs = calc_construction_cost(params, areas, alloc)
     revenues = calc_post_asset(params, areas, alloc)
 
-    # 종전자산 총액 : 공개된 총액 > 조합원 평균 × 조합원 수
-    if params.total_prior_asset is not None:
-        total_prior_asset = params.total_prior_asset
-    else:
-        total_prior_asset = params.avg_prior_asset * params.member_count
-
-    # 비례율 : 고정값이 있으면 그대로, 없으면 사업 수지로 계산
-    if params.proportional_rate is not None:
-        proportional_rate = params.proportional_rate
-        rate_fixed = True
-    else:
-        proportional_rate = (
-            (revenues.total_post_asset - costs.all_cost) / total_prior_asset * 100
-        )
-        rate_fixed = False
+    # 비례율 : 사업 수지로 계산한다. 고정 입력 모드는 두지 않는다.
+    #   비례율을 슬라이더로 두면 공사비·분양가·용적률을 움직여도 분담금이 따라오지 않아
+    #   슬라이더 네 개가 사실상 죽는다. 그래서 (종후자산 − 총사업비) ÷ 종전자산 으로만 구한다
+    total_prior_asset = params.total_prior_asset
+    proportional_rate = (
+        (revenues.total_post_asset - costs.all_cost) / total_prior_asset * 100
+    )
 
     sale_count = sum(u.count for u in alloc.unit_types)
     if params.member_count > sale_count:
@@ -170,21 +206,29 @@ def calc_project(params: ProjectParams, alloc: Allocation) -> ProjectResult:
     if used_supply_m2 > areas.ground_m2:
         warnings.append("공급면적 합계가 지상 연면적을 초과합니다. 세대수/평형을 확인하세요.")
 
-    if not rate_fixed and not 60 <= proportional_rate <= 140:
+    # 비례율 경고 : 벗어난 정도에 따라 단계를 나눈다
+    #   비례율은 사업 수지로 계산되므로 공사비·분양가·용적률을 조절하면 함께 움직인다
+    if proportional_rate <= 0:
+        warnings.append(
+            f"비례율 {proportional_rate:.1f}% : 총사업비가 종후자산을 초과해 사업이 성립하지 않습니다. "
+            "공사비를 낮추거나 용적률·분양가를 높여 보세요."
+        )
+    elif not 60 <= proportional_rate <= 140:
         warnings.append(
             f"비례율 {proportional_rate:.1f}%는 통상 범위(80~120%)를 크게 벗어납니다. 가정값을 확인하세요."
         )
+    elif not 80 <= proportional_rate <= 120:
+        warnings.append(f"비례율 {proportional_rate:.1f}%는 통상 범위(80~120%)를 벗어납니다.")
 
     return ProjectResult(
         unit_types=alloc.unit_types,
         rental_count=alloc.rental_count,
         commercial_area_m2=areas.commercial_m2,
-        gross_floor_area_m2=areas.gross_m2,
+        gross_floor_area_m2=costs.gross_m2,
         total_cost=costs.all_cost,
         total_post_asset=revenues.total_post_asset,
         total_prior_asset=total_prior_asset,
         proportional_rate=proportional_rate,
-        rate_fixed=rate_fixed,
         warnings=warnings,
     )
 

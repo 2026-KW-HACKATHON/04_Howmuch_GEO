@@ -5,12 +5,20 @@ import { ContributionResult, MemberCountRange, ZoneInfo } from './useContributio
 //슬라이더를 움직인 뒤 다시 계산하기까지 기다리는 시간
 const RECALC_DEBOUNCE_MS = 250;
 
-//필지를 연달아 클릭할 때 마지막 선택만 분석하도록 기다리는 시간
-const ZONE_DEBOUNCE_MS = 400;
-
 //세대수 자료가 없을 때 쓰는 임시 조합원 수 슬라이더
 //  첫 계산 응답의 member_count_range 로 범위가 교체된다 (분양 세대수 상한 반영)
 const MEMBER_COUNT_FALLBACK = { value: 2, min: 1, max: 1000 };
+
+//용도지역 버튼 초기 목록 (서버 응답 전에 쓰는 값. AI/engine/zone.py SELECTABLE_ZONING 과 같아야 한다)
+//  재개발은 사실상 주거지역에서만 일어나므로 주거지역만 연다
+const DEFAULT_ZONING_OPTIONS = [
+    '제1종전용주거지역',
+    '제2종전용주거지역',
+    '제1종일반주거지역',
+    '제2종일반주거지역',
+    '제3종일반주거지역',
+    '준주거지역',
+];
 
 //예측 폼 Hook Props
 export interface ModelPredictFormProps {
@@ -49,24 +57,34 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
     const [sliderData, setSliderData] = useState<SlidersState>({
         floor_area_ratio: { value: 200, min: 200, max: 250 },
         member_count: MEMBER_COUNT_FALLBACK,
-        member_price_ratio: { value: 0.8, min: 0.7, max: 0.9 },
+        member_price_ratio: { value: 0.8, min: 0.75, max: 0.95 },
         other_cost_ratio: { value: 0.35, min: 0.25, max: 0.45 },
+        parking_per_household: { value: 1.3, min: 1.0, max: 2.0 },
         commercial_ratio: { value: 0.03, min: 0.0, max: 0.2 },
         construction_cost_per_pyeong: { value: 850, min: 700, max: 1000 },
         general_price_per_m2: { value: 998.25, min: 700, max: 1300 },
-        proportional_rate: { value: 100, min: 80, max: 120, fixed: true },
+        rental_floor_band: { value: '11~20층', options: ['5층 이하', '6~10층', '11~20층', '21층 이상'] },
+        project_period_years: { value: 13, options: [11, 13, 16, 18] },
     });
 
     //조합원 수 범위 (/contribution 응답). 슬라이더 범위를 맞추는 데 쓴다
     const [memberRange, setMemberRange] = useState<MemberCountRange | null>(null);
 
     //공사비·분양가 예측 기준 시점 ("YYYY-MM"). /zone 응답값으로 덮어쓴다
+    //사용자가 고른 용도지역
+    //  목록 초기값을 두는 이유 : 서버가 zoning_options 를 내려주려면 먼저 계산해야 하는데,
+    //  계산하려면 용도지역을 골라야 해서 서로 물린다. 초기값으로 먼저 고르게 하고
+    //  첫 응답이 오면 서버 목록으로 덮어쓴다 (엔진 FAR_TABLE 과 어긋나지 않게)
+    const [selectedZoning, setSelectedZoning] = useState<string>('');
+    const [zoningOptions, setZoningOptions] = useState<string[]>(DEFAULT_ZONING_OPTIONS);
+
     const [targetYm, setTargetYm] = useState<string>(new Date().toISOString().slice(0, 7));
 
     //결과 및 로딩 상태 useState 영역
     const [zoneInfo, setZoneInfo] = useState<ZoneInfo | null>(null);
     const [calcResult, setCalcResult] = useState<ContributionResult | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
+    const [initialCalculationPending, setInitialCalculationPending] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
     //기본 Input Change Handler
@@ -78,8 +96,17 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         }));
     };
 
+    //용도지역 선택 Handler
+    //  용도지역이 바뀌면 용적률 범위가 달라지므로 구역을 다시 분석해야 한다.
+    //  값만 담아두고, 실제 계산은 사용자가 계산 버튼을 눌렀을 때 일어난다
+    const handleSelectZoning = (zoning: string) => {
+        setSelectedZoning(zoning);
+        setZoneCalculated(false);
+    };
+
     //슬라이더 값 변경 Handler
-    const handleSliderChange = (key: string, newValue: number) => {
+    //  노드 슬라이더(임대동 층수)는 문자열 값을 쓰므로 number 로 좁히면 안 된다
+    const handleSliderChange = (key: string, newValue: number | string) => {
         setSliderData((prev: any) => ({
             ...prev,
             [key]: {
@@ -96,18 +123,23 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
 
     //Zone 호출 Handler
     const handleZoneData = useCallback(async () => {
+        setInitialCalculationPending(true);
         setLoading(true);
         setError(null);
         try {
             const pnus = selectedPnus;
-            const data = await zoneApiRef.current(pnus);
+            const data = await zoneApiRef.current(pnus, selectedZoning || undefined);
             
             if (data && data.zone) {
                 setZoneInfo(data.zone);
+                if (data.zoning_options) {
+                    setZoningOptions(data.zoning_options);
+                }
                 if (data.target_ym) {
                     setTargetYm(data.target_ym);
                 }
                 if (data.sliders) {
+                    //비례율은 슬라이더가 아니다. 백엔드가 아예 내려주지 않고 사업 수지로 계산한다
                     //세대수 자료가 없으면 백엔드가 조합원 수 슬라이더를 만들지 않으므로 임시값을 채운다
                     setSliderData({
                         ...data.sliders,
@@ -115,28 +147,29 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
                     });
                 }
                 setZoneCalculated(true);
+            } else {
+                setInitialCalculationPending(false);
             }
         } catch (err) {
             setError("구역 정보를 불러오는 중 오류가 발생했습니다.");
+            setInitialCalculationPending(false);
         } finally {
             setLoading(false);
         }
-    }, [selectedPnus]);
+    }, [selectedPnus, selectedZoning]);
 
-    //지도에서 필지를 고르면 바로 분석한다. 선택을 모두 지우면 값을 0으로 되돌린다
+    //필지 선택이 바뀌면 이전 결과를 무효로 돌린다.
+    //  자동으로 다시 계산하지는 않는다 — 구역 선택 → 용도지역 선택 → 계산 버튼 순서이고,
+    //  필지를 여러 개 고르는 동안 매번 서버를 부르면 느리고 중간 결과가 혼란을 준다
     useEffect(() => {
+        setZoneCalculated(false);
         if (selectedPnus.length === 0) {
             setZoneInfo(null);
             setCalcResult(null);
             setMemberRange(null);
-            setZoneCalculated(false);
             setError(null);
-            return;
         }
-
-        const timer = setTimeout(() => { handleZoneData(); }, ZONE_DEBOUNCE_MS);
-        return () => clearTimeout(timer);
-    }, [handleZoneData, selectedPnus]);
+    }, [selectedPnus]);
 
     //Contribution 호출 (슬라이더가 바뀔 때마다 자동으로 다시 계산된다)
     const calculate = useCallback(async () => {
@@ -179,13 +212,34 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
             const provisional = range && (sentMemberCount < range.min || sentMemberCount > range.max);
             if (!provisional) {
                 setCalcResult(data);
+                setInitialCalculationPending(false);
             }
         } catch (err) {
             setError("분담금 계산 중 오류가 발생했습니다.");
+            setInitialCalculationPending(false);
         } finally {
             setLoading(false);
         }
-    }, [zoneInfo, sliderData, ownerData, formData.name, formData.member_count]);
+    //슬라이더 값을 개별로 나열한다 (sliderData 통째로 넣으면 객체 참조가 매번 바뀌어 깜빡인다).
+    //  ※ 슬라이더를 추가·삭제하면 이 목록도 같이 고쳐야 한다.
+    //    삭제한 키가 남아 있으면 undefined.value 로 렌더가 통째로 죽고(흰 화면),
+    //    추가한 키가 빠지면 그 슬라이더를 움직여도 다시 계산되지 않는다
+    }, [
+        zoneInfo,
+        sliderData.floor_area_ratio.value,
+        sliderData.member_count.value,
+        sliderData.member_price_ratio.value,
+        sliderData.other_cost_ratio.value,
+        sliderData.commercial_ratio.value,
+        sliderData.construction_cost_per_pyeong.value,
+        sliderData.general_price_per_m2.value,
+        sliderData.parking_per_household.value,
+        sliderData.rental_floor_band.value,
+        sliderData.project_period_years.value,
+        ownerData.desired_unit,
+        formData.name,
+        formData.member_count,
+    ]);
 
     //구역 분석 후에는 값이 바뀔 때마다 자동 재계산 (연속 드래그는 마지막 값만 호출)
     useEffect(() => {
@@ -232,9 +286,12 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         zoneInfo,
         targetYm,
         calcResult,
-        loading,
+        loading: loading || initialCalculationPending,
         error,
         handleChange,
+        selectedZoning,
+        zoningOptions,
+        handleSelectZoning,
         handleSliderChange,
         handleSelectUnit,
         handleZoneData,
