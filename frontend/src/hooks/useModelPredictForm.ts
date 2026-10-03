@@ -220,6 +220,10 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         } finally {
             setLoading(false);
         }
+    //슬라이더 값을 개별로 나열한다 (sliderData 통째로 넣으면 객체 참조가 매번 바뀌어 깜빡인다).
+    //  ※ 슬라이더를 추가·삭제하면 이 목록도 같이 고쳐야 한다.
+    //    삭제한 키가 남아 있으면 undefined.value 로 렌더가 통째로 죽고(흰 화면),
+    //    추가한 키가 빠지면 그 슬라이더를 움직여도 다시 계산되지 않는다
     }, [
         zoneInfo,
         sliderData.floor_area_ratio.value,
@@ -229,7 +233,9 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         sliderData.commercial_ratio.value,
         sliderData.construction_cost_per_pyeong.value,
         sliderData.general_price_per_m2.value,
-        sliderData.proportional_rate.value,
+        sliderData.parking_per_household.value,
+        sliderData.rental_floor_band.value,
+        sliderData.project_period_years.value,
         ownerData.desired_unit,
         formData.name,
         formData.member_count,
