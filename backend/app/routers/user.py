@@ -7,6 +7,7 @@ from app.auth.encrypt import password_manager
 from app.schemas.user.user_request import UserSignUpRequest, UserLoginRequest
 from app.schemas.user.user_response import UserSignUpResponse
 from app.exceptions.exceptions_handler import ConflictException, UnauthorizedException
+from app.services.credit_service import get_daily_credits, reset_daily_credits
 
 #User 라우터
 router = APIRouter(
@@ -137,3 +138,27 @@ def get_user_info_handler(request: Request, session: Session = Depends(get_db)):
         "user_name": user.user_name,
         "email": user.email
     }
+
+#사용자 크레딧 조회 API 엔드포인트
+@router.get(
+    "/user/credits",
+    status_code=status.HTTP_200_OK,
+)
+async def get_user_credits_handler(request: Request):
+    user_id = request.session.get("user_id")
+    if user_id is None:
+        raise UnauthorizedException("로그인이 필요합니다.")
+
+    return await get_daily_credits(int(user_id))
+
+#사용자 크레딧 초기화 API 엔드포인트
+@router.post(
+    "/user/credits/reset",
+    status_code=status.HTTP_200_OK,
+)
+async def reset_user_credits_handler(request: Request):
+    user_id = request.session.get("user_id")
+    if user_id is None:
+        raise UnauthorizedException("로그인이 필요합니다.")
+
+    return await reset_daily_credits(int(user_id))

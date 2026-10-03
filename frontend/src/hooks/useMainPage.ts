@@ -2,7 +2,8 @@ import { getVWorldCadastral } from '../api/cadastral_api';
 import { getZoneInfo, getContributionInfo } from '../api/realestate_api';
 import { ParcelInfo } from '../utils/parcel';
 import { useCallback, useState, useEffect } from 'react';
-import { userLogout, userInfo } from '../api/user_api';
+import { userLogout, userInfo, userCredits, resetUserCredits } from '../api/user_api';
+import axios from 'axios';
 
 //MainPage Hook
 export const useMainPage = () => {
@@ -12,22 +13,25 @@ export const useMainPage = () => {
 
     const [userName, setUserName] = useState<string>('');
     const [userEmail, setUserEmail] = useState<string>('');
+    const [dailyCredits, setDailyCredits] = useState<number | null>(null);
+    const [creditsUnavailable, setCreditsUnavailable] = useState<boolean>(false);
+    const [creditsResetAt, setCreditsResetAt] = useState<string | null>(null);
+    const [resettingCredits, setResettingCredits] = useState<boolean>(false);
 
     //선택 필지의 면적·공시지가 (지적도 응답에서 뽑은 값)
     const [selectedParcels, setSelectedParcels] = useState<ParcelInfo[]>([]);
 
-    //로그인 되어있는지 확인
-    useEffect(() => {
-        checkLoginStatus();
-    }, []);
-
     //로그인 상태 확인
-    const checkLoginStatus = async () => {
+    const checkLoginStatus = useCallback(async () => {
         try {
             const response = await userInfo();
             if (response && response.user_name && response.email) {
                 setUserName(response.user_name);
                 setUserEmail(response.email);
+                const credits = await userCredits();
+                setDailyCredits(credits.credits_remaining);
+                setCreditsResetAt(credits.resets_at);
+                setCreditsUnavailable(false);
             } else {
                 alert("계정 정보에 오류가 생겼습니다. 다시 로그인해주세요.");
                 window.location.href = "/login";
@@ -36,9 +40,37 @@ export const useMainPage = () => {
             if (err.response && err.response.status === 401) {
                 alert("로그인이 필요합니다.");
                 window.location.href = "/login";
+            } else {
+                setCreditsUnavailable(true);
+                console.error("[ 크레딧 조회 오류 발생 ] : ", err);
             }
         }
-    };
+    }, []);
+
+    //로그인 되어있는지 확인
+    useEffect(() => {
+        void checkLoginStatus();
+    }, [checkLoginStatus]);
+
+    //페이지를 열어둔 채 날짜가 바뀌어도 일일 크레딧 잔액을 갱신
+    useEffect(() => {
+        if (!creditsResetAt) return;
+
+        const delay = Math.max(0, Date.parse(creditsResetAt) - Date.now()) + 1000;
+        const timer = window.setTimeout(async () => {
+            try {
+                const credits = await userCredits();
+                setDailyCredits(credits.credits_remaining);
+                setCreditsResetAt(credits.resets_at);
+                setCreditsUnavailable(false);
+            } catch (err) {
+                setCreditsUnavailable(true);
+                console.error("[ 일일 크레딧 갱신 오류 발생 ] : ", err);
+            }
+        }, delay);
+
+        return () => window.clearTimeout(timer);
+    }, [creditsResetAt]);
 
     //로그아웃 버튼 클릭시 로그아웃 처리
     const logoutButtonAction = async () => {
@@ -51,6 +83,23 @@ export const useMainPage = () => {
             alert("로그아웃 중 오류가 발생했습니다. 다시 시도해주세요.");
         }
     }
+
+    const resetCreditsAction = async () => {
+        if (!window.confirm("오늘 사용할 크레딧을 5개로 초기화할까요?")) return;
+
+        setResettingCredits(true);
+        try {
+            const credits = await resetUserCredits();
+            setDailyCredits(credits.credits_remaining);
+            setCreditsResetAt(credits.resets_at);
+            setCreditsUnavailable(false);
+        } catch (err) {
+            console.error("[ 크레딧 초기화 오류 발생 ] : ", err);
+            alert("크레딧 초기화에 실패했습니다. 잠시 후 다시 시도해주세요.");
+        } finally {
+            setResettingCredits(false);
+        }
+    };
 
 
     //선택 필지 갱신 Handler
@@ -89,8 +138,17 @@ export const useMainPage = () => {
     const handleZoneData = useCallback(async (pnus: string[]) => {
         try {
             const response = await getZoneInfo(pnus, { parcels: selectedParcels });
+            if (Number.isInteger(response.credits_remaining)) {
+                setDailyCredits(response.credits_remaining);
+                setCreditsUnavailable(false);
+            } else {
+                setCreditsUnavailable(true);
+            }
             return response;
         } catch (err){
+            if (axios.isAxiosError(err) && err.response?.status === 429) {
+                setDailyCredits(0);
+            }
             console.log("[ handleZoneData 오류 발생 ] : ", err);
             throw err;
         }
@@ -120,6 +178,10 @@ export const useMainPage = () => {
         handleContributionData,
         logoutButtonAction,
         userName,
-        userEmail
+        userEmail,
+        dailyCredits,
+        creditsUnavailable,
+        resettingCredits,
+        resetCreditsAction,
     };
 }

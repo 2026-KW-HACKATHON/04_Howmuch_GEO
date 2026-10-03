@@ -57,6 +57,14 @@ async def get_zone(req: ZoneRequest):
 async def get_contribution(req: ContributionRequest):
 ```
 
+# 일일 크레딧
+
+- `GET /api/v1/user/credits` : 로그인한 사용자의 남은 크레딧과 다음 충전 시각을 반환.
+- `POST /api/v1/user/credits/reset` : 로그인한 사용자의 당일 크레딧을 5개로 초기화. 프로필 메뉴에서 실행.
+- `POST /api/v1/zone` : 로그인 필수. 성공한 구역 분석 1회마다 크레딧 1개를 사용.
+- 사용자별 하루 5개가 지급되며, 매일 한국 시간 자정에 자동 충전. 잔액은 Redis에 사용자 ID와 날짜를 조합해 저장.
+- `/contribution`의 슬라이더 재계산은 별도 크레딧을 사용하지 않음.
+
 # 추가 정보
 
 - **V-World** 호출상 테스트 과정에서, 만약 로컬환경에서의 **API** 호출은 작동하지만, **Codespace** 나 **Render** 과 같은 클라우드상의 호출은 차단되는 현상 관측. 클라우드 개발 과정에서 임의로 연결 실패에서는 사전정의 데이터 사용 및 콘솔 출력으로 처리.

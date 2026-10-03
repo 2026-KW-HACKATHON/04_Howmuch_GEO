@@ -15,7 +15,7 @@ router = APIRouter(
 async def get_vworld_cadastral(request: CadastralRequest):
     api_key = os.getenv("VWORLD_API_KEY")
     VWORLD_DOMAIN = os.getenv("VWORLD_DOMAIN")
-    PROXY_URL = os.getenv("PROXY_URL")
+    PROXY_URL = os.getenv("PROXY_URL") + "/req/data"
 
     if not api_key or not VWORLD_DOMAIN:
         return MOCK_CADASTRAL_RESPONSE
