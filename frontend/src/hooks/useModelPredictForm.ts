@@ -84,6 +84,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
     const [zoneInfo, setZoneInfo] = useState<ZoneInfo | null>(null);
     const [calcResult, setCalcResult] = useState<ContributionResult | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
+    const [initialCalculationPending, setInitialCalculationPending] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
     //기본 Input Change Handler
@@ -122,6 +123,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
 
     //Zone 호출 Handler
     const handleZoneData = useCallback(async () => {
+        setInitialCalculationPending(true);
         setLoading(true);
         setError(null);
         try {
@@ -145,9 +147,12 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
                     });
                 }
                 setZoneCalculated(true);
+            } else {
+                setInitialCalculationPending(false);
             }
         } catch (err) {
             setError("구역 정보를 불러오는 중 오류가 발생했습니다.");
+            setInitialCalculationPending(false);
         } finally {
             setLoading(false);
         }
@@ -207,13 +212,28 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
             const provisional = range && (sentMemberCount < range.min || sentMemberCount > range.max);
             if (!provisional) {
                 setCalcResult(data);
+                setInitialCalculationPending(false);
             }
         } catch (err) {
             setError("분담금 계산 중 오류가 발생했습니다.");
+            setInitialCalculationPending(false);
         } finally {
             setLoading(false);
         }
-    }, [zoneInfo, sliderData, ownerData, formData.name, formData.member_count]);
+    }, [
+        zoneInfo,
+        sliderData.floor_area_ratio.value,
+        sliderData.member_count.value,
+        sliderData.member_price_ratio.value,
+        sliderData.other_cost_ratio.value,
+        sliderData.commercial_ratio.value,
+        sliderData.construction_cost_per_pyeong.value,
+        sliderData.general_price_per_m2.value,
+        sliderData.proportional_rate.value,
+        ownerData.desired_unit,
+        formData.name,
+        formData.member_count,
+    ]);
 
     //구역 분석 후에는 값이 바뀔 때마다 자동 재계산 (연속 드래그는 마지막 값만 호출)
     useEffect(() => {
@@ -260,7 +280,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         zoneInfo,
         targetYm,
         calcResult,
-        loading,
+        loading: loading || initialCalculationPending,
         error,
         handleChange,
         selectedZoning,
