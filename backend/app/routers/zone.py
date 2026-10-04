@@ -4,6 +4,7 @@ from app.services.credit_service import consume_daily_credit, ensure_daily_credi
 from app.services.zone_service import get_cached_trades, set_cached_trades, get_cached_land, set_cached_land
 from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
 from app.utils.slider_builder import build_sliders
+from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException, UnauthorizedException
 from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
 from AI.engine.zone import SELECTABLE_ZONING, build_zone_summary
 from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
@@ -70,6 +71,12 @@ VWORLD_SESSION.mount(
     ),
 )
 
+#호출 간격(초)
+VWORLD_CALL_GAP = 0.05
+
+#실거래 조회 기간(개월)
+TRADE_MONTHS = 12
+
 #부동산 계산식 API 응답 파싱
 def parse_vworld_response(response: requests.Response, api_name: str) -> dict[str, Any]:
     content_type = response.headers.get("Content-Type", "unknown")
@@ -91,48 +98,48 @@ def parse_vworld_response(response: requests.Response, api_name: str) -> dict[st
         raise ValueError(f"{api_name} returned JSON with an unexpected top-level type")
     return data
 
-
-#호출 간격(초)
-VWORLD_CALL_GAP = 0.05
-
-#실거래 조회 기간(개월)
-TRADE_MONTHS = 12
-
 #분양가 시점 보정용 실거래 목록
 async def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
+
+    #Redis 캐시 조회
     cached = await get_cached_trades(lawd_cd, target_ym)
+
+    #캐시로 있는 값이 존재한다면 해당 값 반환
     if cached is not None:
         return cached
 
-    if not os.getenv("MOLIT_API_KEY"):
-        print(f"[Cache BYPASS] Trade API key missing ({lawd_cd}:{target_ym})")
-        return []
-
-    # target_ym 이전 TRADE_MONTHS 개월
+    #target_ym 이전 TRADE_MONTHS 개월
     year, month = (int(v) for v in target_ym.split("-"))
     ym_list = []
+
     for step in range(TRADE_MONTHS):
         total = year * 12 + (month - 1) - step
         ym_list.append(f"{total // 12}-{total % 12 + 1:02d}")
 
+    #fetch_trades 함수 호출 시도
     try:
         loop = asyncio.get_event_loop()
         trades = await loop.run_in_executor(executor, fetch_trades, lawd_cd, ym_list)
-    except Exception as e:
-        logger.warning(f"[Warning] 실거래가 조회 실패 {lawd_cd}: {e}")
+
+    #오류 발생시 로깅 후 빈 배열 반환
+    except Exception as err:
+        logger.warning(f"[ Log ] : 실거래가 조회 실패 {lawd_cd} : {err}")
         return []
 
+    #호출 및 trades 데이터 반환 성공시, Redis 캐싱 후 값 반환
     if trades:
         await set_cached_trades(lawd_cd, target_ym, trades)
+
     return trades
 
-#부동산 계산식 API 라우터
+#제곱미터당 땅 가격 조회 API 호출용 비동기 함수
 async def fetch_land_price_per_m2(pnu: str) -> int:
     try:
+
+        #API 요청을 위한 URL 설정
         url = f"{PROXY_URL.rstrip('/')}/getIndvdLandPrice"
-        print(url)
-        #numOfRows 를 주지 않으면 기본 10건만 와서 최신 연도가 잘린다.
-        #  pageNo 가 없으면 numOfRows 가 무시되므로 둘을 함께 넘긴다
+
+        #요청 파라미터 설정
         params = {
             "key": VWORLD_API_KEY,
             "pnu": pnu,
@@ -141,43 +148,62 @@ async def fetch_land_price_per_m2(pnu: str) -> int:
             "numOfRows": 30,
             "pageNo": 1,
         }
-        logger.info(f"[Log] Fetching land price for PNU {pnu}")
+
+        #요청 전송
+        logger.warning(f"[ Log ] : PNU : {pnu} 에 대한 가격을 조회중입니다.")
         response = VWORLD_SESSION.get(url, params=params, timeout=5)
+
+        #응답 파싱
         data = parse_vworld_response(response, "getIndvdLandPrice")
-        print("fetch_land_price_per_m2 : ", response)
         rows = data.get("indvdLandPrices", {}).get("field", [])
+
+        #rows 데이터가 Dictionary 라면 배열화
         if isinstance(rows, dict):
             rows = [rows]
 
-        #연도별 이력이 오므로 가장 최근 기준연도를 쓴다
+        #연도별 이력이 오므로 가장 최근 기준연도를 사용
         price = None
         if rows:
             latest = max(rows, key=lambda row: str(row.get("stdrYear", "")))
             price = latest.get("pblntfPclnd")
         
-        logger.info(f"[Log] Land Price for PNU {pnu} is {price}")
+        logger.warning(f"[ Log ] : PNU : {pnu} 의 가격은 {price} 입니다.")
+
+        #price 값이 존재한다면 반환. 없다면 0 반환.
         return int(price) if price else 0
-    except Exception as e:
-        logger.warning(f"[Warning] get_land_price_per_m2 오류 (Price): {e}")
+
+    #API 오류 발생시 로깅 후 price 는 0 반환
+    except Exception as err:
+        logger.warning(f"[ Log ] : get_land_price_per_m2 API 호출에서 오류가 발생했습니다 : {str(err)}")
         return 0
 
-#부동산 계산식 API 라우터
+#토지별 특성 정보 API 호출 비동기 함수
 async def fetch_land_characteristics(pnu: str) -> dict:
+
+    #기본값 데이터
     default_data = {
         "area_m2": 300.0,
         "zoning": "제2종일반주거지역",
         "land_category": "대",
         "land_price_per_m2": 0,
-        "fallback": True,        #조회 실패 표시. 용도지역이 가정값이라 용적률이 왜곡된다
+        "fallback": True,
     }
 
+    #pnu 값으로 Redis 캐시값 조회
     cached = await get_cached_land(pnu)
+
+    #캐시값이 존재한다면 해당 정보 반환
     if cached:
         return cached
     
     try:
+        #일정 시간 대기
         time.sleep(VWORLD_CALL_GAP)
+
+        #프록시 주소를 이용한 요청 URL 값 설정
         url = f"{PROXY_URL.rstrip('/')}/getLandCharacteristics"
+
+        #요청 파라미터 설정
         params = {
             "key": VWORLD_API_KEY,
             "pnu": pnu,
@@ -186,23 +212,32 @@ async def fetch_land_characteristics(pnu: str) -> dict:
             "numOfRows": 30,
             "pageNo": 1,
         }
+
+        #응답 요청
         response = VWORLD_SESSION.get(url, params=params, timeout=5)
+
+        #응답값 파싱
         data = parse_vworld_response(response, "getLandCharacteristics")
         rows = data.get("landCharacteristicss", {}).get("field", [])
+
+        #rows 가 Dictionary 라면 배열로 전환
         if isinstance(rows, dict):
             rows = [rows]
         
+        #rows 가 없다면, 기본값 데이터 반환
         if not rows:
             return default_data
 
         #연도별 이력 중 최신 기준연도
         land_info = max(rows, key=lambda row: str(row.get("stdrYear", "")))
 
-        area = float(land_info.get("lndpclAr") or 300.0)
-        zoning = land_info.get("prposArea1Nm") or land_info.get("prposArea1Cd") or "제2종일반주거지역"
-        land_category = land_info.get("lndcgrCodeNm") or land_info.get("lndcgrCode") or "대"
-        price = int(float(land_info.get("pblntfPclnd") or 0))
+        #데이터에서 값 추출. 없다면 기본값 사용
+        area = float(land_info.get("lndpclAr") or default_data["area_m2"])
+        zoning = land_info.get("prposArea1Nm") or land_info.get("prposArea1Cd") or default_data["zoning"]
+        land_category = land_info.get("lndcgrCodeNm") or land_info.get("lndcgrCode") or default_data["land_category"]
+        price = int(float(land_info.get("pblntfPclnd") or default_data["land_price_per_m2"]))
         
+        #결과 종합
         result = {
             "area_m2": area,
             "zoning": zoning,
@@ -210,11 +245,15 @@ async def fetch_land_characteristics(pnu: str) -> dict:
             "land_price_per_m2": price,
             "fallback": False,
         }
+
+        #결과값 Redis 캐싱
         await set_cached_land(pnu, result)
+
+        #결과값 반환
         return result
         
-    except Exception as e:
-        logger.warning(f"[Warning] V-World Land Characteristics API 오류 {pnu}: {e}")
+    except Exception as err:
+        logger.warning(f"[ Log ] : V-World Land Characteristics API 오류 {pnu}: {err}")
         return default_data
 
 #Pnus 정보를 바탕으로 구체적 정보를 받아오는 API
@@ -223,18 +262,21 @@ async def fetch_land_characteristics(pnu: str) -> dict:
     summary="구역 선택 및 요약 집계"
 )
 async def get_zone(req: ZoneRequest, request: Request):
+
+    #세션에서 user_id 반환
     user_id = request.session.get("user_id")
+
+    #로그인이 안되있다면 Unauthorized Exception 발생
     if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="로그인이 필요합니다.",
-        )
+        raise UnauthorizedException("로그인이 필요합니다.")
+
+    #사용자 크레딧이 남아있는지 확인
     await ensure_daily_credit_available(int(user_id))
 
     try:
         parcels = []
 
-        #프론트가 지적도에서 뽑아 보낸 면적·공시지가. 있으면 데이터 API 조회를 건너뛴다
+        #프론트가 지적도에서 뽑아 보낸 면적·공시지가. 있으면 데이터 API 조회를 건너뜀
         hints = {h.pnu: h for h in (req.parcels or [])}
 
         failed_pnus = []
@@ -287,14 +329,12 @@ async def get_zone(req: ZoneRequest, request: Request):
 
         #분양가 : 인근 분양 사례 + 실거래 추세 보정 (PNU 앞 5자리 = 시군구 코드)
         lawd_cd = zone.pnus[0][:5] if zone.pnus else ""
-        print(f"[Check] lawd_cd 값: '{lawd_cd}' (Type: {type(lawd_cd)})")
         trades = await fetch_recent_trades(lawd_cd, target_ym) if lawd_cd else []
         sale = predict_sale_price_per_m2(target_ym, trades=trades, region=zone.region)
 
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    #오류 발생시 Service Unavailable Exception 발생
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"[Warning] 구역 데이터 집계 중 오류 발생: {str(e)}")
+        raise ServiceUnavailableException(f"Zone API 호출에서 오류 발생.")
 
     result = {
         "zone": asdict(zone),
@@ -307,5 +347,9 @@ async def get_zone(req: ZoneRequest, request: Request):
         "cost_prediction": asdict(cost),
         "sale_prediction": asdict(sale),
     }
+
+    #남은 크레딧 최신화
     result["credits_remaining"] = await consume_daily_credit(int(user_id))
+
+    #결과 반환
     return result

@@ -22,6 +22,14 @@ class ServiceUnavailableException(CustomException):
     def __init__(self, message: str = "[ Backend ] : Service Unavailable 503 Error"):
         super().__init__(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message=message)
 
+class BadRequestException(CustomException):
+    def __init__(self, message: str = "[ Backend ] : Bad Request 400 Error"):
+        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, message=message)
+
+class ServiceUnavailableException(CustomException):
+    def __init__(self, message: str = "[ Backend ] : Service Unavailable 503 Error"):
+        super().__init__(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, message=message)
+
 #사용자 정의 예외 처리기 등록 함수
 def add_exception_handlers(app: FastAPI):
     @app.exception_handler(CustomException)

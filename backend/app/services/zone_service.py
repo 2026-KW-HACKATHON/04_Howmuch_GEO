@@ -23,20 +23,20 @@ async def get_cached_trades(lawd_cd: str, target_ym: str) -> Optional[list]:
 
             #Redis에서 꺼내온 JSON 문자열을 파이썬 객체로 변환 및 성공 로깅
             raw_list = json.loads(data)
-            logger.warning(f"[Redis 캐시 불러오기 성공] Trade {cache_key}")
+            logger.warning(f"[ Log ] : Redis 캐시 불러오기 성공 : Trade : {cache_key}")
 
             #꺼내온 객체가 dict이면 Trade 객체로 변환, 아니면 그대로 반환
             return [Trade(**item) if isinstance(item, dict) else item for item in raw_list]
         
         #Redis에 해당 키가 없으면 MISS 로깅 후 None 반환
-        logger.warning(f"[Redis 캐시 MISS] Trade {cache_key}")
+        logger.warning(f"[ Log ] : Redis 캐시 존재하지 않음 : Trade : {cache_key}")
         return None
 
     #Redis에서 꺼내온 값이 JSON으로 디코딩되지 않거나 다른 오류 발생 시
     except Exception as err:
 
         #경고 로깅 후 None 반환
-        logger.warning(f"[Redis 캐시 불러오기 실패] Redis 읽기/디코딩 오류 (Trade {cache_key}): {err}")
+        logger.warning(f"[ Log ] : Redis 캐시 불러오기 실패 : Redis 읽기/디코딩 오류 : Trade : {cache_key}: {str(err)}")
         return None
 
 #Redis 를 통한 Trade 캐시 저장
@@ -84,11 +84,11 @@ async def set_cached_trades(lawd_cd: str, target_ym: str, trades: list) -> None:
 
 
         #Redis에 저장 성공 시 로깅
-        logger.warning(f"[Redis 캐시 저장 성공] Trade {cache_key} (TTL: 86400s)")
+        logger.warning(f"[ Log ] : Redis 캐시 저장 성공 : Trade : {cache_key} : (TTL 86400s)")
 
     #Redis 저장 중 오류 발생 시 경고 로깅
     except Exception as err:
-        logger.warning(f"[Redis 캐시 저장 실패] Redis 쓰기 오류 (Trade {cache_key}): {err}")
+        logger.warning(f"[ Log ] : Redis 캐시 저장 실패 : Redis 쓰기 오류 : Trade : {cache_key} : {str(err)}")
 
 #Redis 를 통한 Land 캐시 불러오기
 async def get_cached_land(pnu: str) -> Optional[dict]:
@@ -102,16 +102,16 @@ async def get_cached_land(pnu: str) -> Optional[dict]:
 
         #Redis에서 꺼내온 값이 있다면 JSON 문자열을 파이썬 객체로 변환 및 성공 로깅
         if val:
-            logger.warning(f"[Redis 캐시 불러오기 성공] Land {cache_key}")
+            logger.warning(f"[ Log ] : Redis 캐시 불러오기 성공 : Land : {cache_key}")
             return json.loads(val)
 
         #Redis에 해당 키가 없으면 MISS 로깅 후 None 반환
         else:
-            logger.warning(f"[Redis 캐시 MISS] Land {cache_key}")
+            logger.warning(f"[ Log ] : Redis 캐시 존재하지 않음 : Land : {cache_key}")
     
     #Redis에서 꺼내온 값이 JSON으로 디코딩되지 않거나 다른 오류 발생 시 경고 로깅
-    except Exception as e:
-        logger.warning(f"[Redis 캐시 불러오기 실패] Redis 읽기/디코딩 오류 (Land {cache_key}): {e}")
+    except Exception as err:
+        logger.warning(f"[ Log ] : Redis 캐시 불러오기 실패 : Redis 읽기/디코딩 오류 : Land : {cache_key} : {err}")
     
     #Redis에서 값을 가져오지 못했거나 오류가 발생한 경우 None 반환
     return None
@@ -132,8 +132,8 @@ async def set_cached_land(pnu: str, data: dict):
         await redis_client.setex(cache_key, 604800, serialized_data)
 
         #Redis에 저장 성공 시 로깅
-        logger.warning(f"[Redis 캐시 저장 성공] Land {cache_key} (TTL: 604800s)")
+        logger.warning(f"[ Log ] : Redis 캐시 저장 성공 : Land : {cache_key} : (TTL 604800s)")
 
     #Redis 저장 중 오류 발생 시 경고 로깅
-    except Exception as e:
-        logger.warning(f"[Redis 캐시 저장 실패] Redis 쓰기 오류 (Land {cache_key}): {e}")
+    except Exception as err:
+        logger.warning(f"[ Log ] : Redis 캐시 저장 실패 : Redis 쓰기 오류 : Land : {cache_key} : {err}")

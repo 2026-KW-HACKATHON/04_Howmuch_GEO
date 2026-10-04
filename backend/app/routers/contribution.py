@@ -1,34 +1,33 @@
+from app.config.engine_defaults import DEFAULT_PROJECT_PERIOD_YEARS, ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS,MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
+from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
+from app.utils.slider_builder import build_sliders
+from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException
+from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
+from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
+from AI.engine.zone import build_zone_summary
+from AI.predict.construction_cost import predict_cost_per_pyeong
+from AI.predict.sale_price import fetch_trades, predict_sale_price_per_m2
 from dataclasses import asdict
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 from typing import List, Optional
-from app.config.engine_defaults import (
-    DEFAULT_PROJECT_PERIOD_YEARS,
-    ENGINE_DEFAULTS,
-    ENGINE_DEFAULTS_FOR_PARAMS,
-    MEMBER_COUNT_UNKNOWN_MIN_RATIO,
-    UNIT_MIX,
-)
-from app.utils.slider_builder import build_sliders
-from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
-from AI.engine.zone import build_zone_summary
-from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
-from AI.predict.construction_cost import predict_cost_per_pyeong
-from AI.predict.sale_price import fetch_trades, predict_sale_price_per_m2
-from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
 from dotenv import load_dotenv
-import os
-import requests
-import time
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import json
+import logging
+import os
+import requests
+import time
 
 #부동산 계산식 API 라우터 설정
 router = APIRouter(
     prefix="/api/v1",
     tags=["Contribution Engine"]
 )
+
+#백엔드 Logger
+logger = logging.getLogger(__name__)
 
 #환경 변수 로드
 load_dotenv()
@@ -64,20 +63,18 @@ async def get_contribution(req: ContributionRequest):
         sliders = dict(req.sliders)
 
         #감정평가 보정률은 ProjectParams 의 필드가 아니라 종전자산 환산에만 쓴다.
-        #  슬라이더에서 뺐으므로 평소에는 ENGINE_DEFAULTS 의 고정값(1.543)이 쓰인다
+        #슬라이더에서 뺐으므로 평소에는 ENGINE_DEFAULTS 의 고정값(1.543)이 쓰인다
         appraisal_ratio = sliders.pop("appraisal_ratio", ENGINE_DEFAULTS["appraisal_ratio"])
 
         #사업 기간도 ProjectParams 의 필드가 아니다.
-        #  공사비·분양가를 어느 시점으로 밀지 정하는 값이라 예측 모델 쪽에서 쓴다 (target_ym)
+        #공사비·분양가를 어느 시점으로 밀지 정하는 값이라 예측 모델 쪽에서 쓴다 (target_ym)
         period_years = sliders.pop("project_period_years", DEFAULT_PROJECT_PERIOD_YEARS)
 
         #종전자산 총액 : 선택 구역 공시지가 총액 × 보정률. 개인 종전자산과 같은 근거를 쓴다
-        #  같은 보정률이 분자·분모에 들어가 분담금에서 약분되므로 이 값의 오차는 비례율 표시만 좌우한다
+        #같은 보정률이 분자·분모에 들어가 분담금에서 약분되므로 이 값의 오차는 비례율 표시만 좌우한다
         if not req.land_value_total:
-            raise HTTPException(
-                status_code=400,
-                detail="구역 공시지가 총액이 없습니다. 지도에서 필지를 선택한 뒤 다시 계산해 주세요.",
-            )
+            raise BadRequestException("구역 공시지가 총액이 없습니다. 지도에서 필지를 선택한 뒤 다시 계산해 주세요.")
+
         total_prior_asset = req.land_value_total * appraisal_ratio
 
         params = ProjectParams(
@@ -93,8 +90,8 @@ async def get_contribution(req: ContributionRequest):
         )
         
         #조합원 종전자산 : 공시가격을 직접 받지 않으면 선택 구역 공시지가의 1인분으로 추정한다
-        #  1인분으로 두면 구역 평균 조합원이 되어 분담금이 구역 평균값으로 나온다.
-        #  내 필지를 지정하면 그 필지 공시가격이 들어와 개인화된다
+        #1인분으로 두면 구역 평균 조합원이 되어 분담금이 구역 평균값으로 나온다.
+        #내 필지를 지정하면 그 필지 공시가격이 들어와 개인화된다
         if req.owner.official_price is not None:
             prior_asset_kwargs = {"official_price": req.owner.official_price}
         else:
@@ -125,16 +122,15 @@ async def get_contribution(req: ContributionRequest):
                 capped=True,
             )
 
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        print(f"[Warning] 조합원 개인 분담금 및 사업성 계산 중 오류 발생: {str(e)}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"[Warning] 서버 내부 오류: {str(e)}")
+    #오류 발생시 Service Unavailable Exception 발생
+    except Exception as err:
+        logger.warning(f"[ Log ] : Contribution API 호출에서 오류 발생 : {str(err)}")
+        raise ServiceUnavailableException("Contribution API 호출에서 오류가 발생했습니다.")
 
+    #결과 반환
     return {
         **asdict(result),
         "unit_options": [asdict(o) for o in options],
-        #슬라이더를 다시 그릴 수 있게 갱신된 조합원 수 범위를 함께 내려준다
         "member_count_range": asdict(member_range),
         "warnings": result.project.warnings,
     }
