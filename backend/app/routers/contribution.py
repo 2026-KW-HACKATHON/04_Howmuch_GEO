@@ -77,6 +77,40 @@ async def get_contribution(req: ContributionRequest, request: Request):
         #공사비·분양가를 어느 시점으로 밀지 정하는 값이라 예측 모델 쪽에서 쓴다 (target_ym)
         period_years = sliders.pop("project_period_years", DEFAULT_PROJECT_PERIOD_YEARS)
 
+        #슬라이더에 보이는 공사비·분양가는 "오늘 기준" 값이다.
+        #  사용자가 아는 금액을 조절하게 두고, 계산만 사업기간 뒤 시점으로 민다.
+        #  (화면에는 "예상 분담금 (N년 후 기준)" 으로 어느 시점 금액인지 표시된다)
+        #  공사비는 건설공사비지수로, 분양가는 측정한 연평균 상승률로 보정한다
+        now_ym = datetime.now().strftime("%Y-%m")
+        target_ym = f"{datetime.now().year + int(period_years)}-{datetime.now().month:02d}"
+
+        if period_years:
+            cost_index = load_index()
+            cost_rate = trend.estimate_annual_rate(cost_index).annual_rate
+
+            if "construction_cost_per_pyeong" in sliders:
+                sliders["construction_cost_per_pyeong"] = round(
+                    sliders["construction_cost_per_pyeong"]
+                    * trend.index_at(target_ym, cost_index, cost_rate)
+                    / trend.index_at(now_ym, cost_index, cost_rate),
+                    1,
+                )
+
+            if "general_price_per_m2" in sliders:
+                sliders["general_price_per_m2"] = round(
+                    trend.escalate(
+                        sliders["general_price_per_m2"], now_ym, target_ym, SALE_PRICE_ANNUAL_RATE
+                    ),
+                    2,
+                )
+
+        #종전자산도 사업기간만큼 민다.
+        #  단 시점이 다르다 — 종전자산은 "사업시행계획인가 고시일" 기준으로 평가하고(도시정비법),
+        #  그 날은 관리처분인가보다 중앙값 3.3년 앞선다. 그래서 (사업기간 − 3.3)년만 민다.
+        #  이걸 빼먹으면 분모(종전자산)만 제자리인 채 분자(종후자산)가 커져 비례율이 폭증한다
+        prior_years = max(float(period_years) - PRIOR_ASSET_LEAD_YEARS, 0.0)
+        prior_growth = (1 + LAND_PRICE_ANNUAL_RATE) ** prior_years
+
         #종전자산 총액 : 선택 구역 공시지가 총액 × 보정률. 개인 종전자산과 같은 근거를 쓴다
         #같은 보정률이 분자·분모에 들어가 분담금에서 약분되므로 이 값의 오차는 비례율 표시만 좌우한다
         if not req.land_value_total:
@@ -100,9 +134,11 @@ async def get_contribution(req: ContributionRequest, request: Request):
         #1인분으로 두면 구역 평균 조합원이 되어 분담금이 구역 평균값으로 나온다.
         #내 필지를 지정하면 그 필지 공시가격이 들어와 개인화된다
         if req.owner.official_price is not None:
-            prior_asset_kwargs = {"official_price": req.owner.official_price}
+            prior_asset_kwargs = {"official_price": req.owner.official_price * prior_growth}
         else:
-            prior_asset_kwargs = {"official_price": req.land_value_total / max(req.member_count, 1)}
+            prior_asset_kwargs = {
+                "official_price": req.land_value_total / max(req.member_count, 1) * prior_growth
+            }
 
         owner = OwnerInput(
             desired_unit=req.owner.desired_unit,

@@ -60,7 +60,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         member_price_ratio: { value: 0.8, min: 0.75, max: 0.95 },
         other_cost_ratio: { value: 0.35, min: 0.25, max: 0.45 },
         parking_per_household: { value: 1.3, min: 1.0, max: 2.0 },
-        commercial_ratio: { value: 0.03, min: 0.0, max: 0.2 },
+        commercial_ratio: { value: 0.02, min: 0.0, max: 0.2 },
         construction_cost_per_pyeong: { value: 850, min: 700, max: 1000 },
         general_price_per_m2: { value: 998.25, min: 700, max: 1300 },
         rental_floor_band: { value: '11~20층', options: ['5층 이하', '6~10층', '11~20층', '21층 이상'] },
@@ -226,8 +226,11 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         }
     //슬라이더 값을 개별로 나열한다 (sliderData 통째로 넣으면 객체 참조가 매번 바뀌어 깜빡인다).
     //  ※ 슬라이더를 추가·삭제하면 이 목록도 같이 고쳐야 한다.
-    //    삭제한 키가 남아 있으면 undefined.value 로 렌더가 통째로 죽고(흰 화면),
-    //    추가한 키가 빠지면 그 슬라이더를 움직여도 다시 계산되지 않는다
+    //    추가한 키가 빠지면 그 슬라이더를 움직여도 다시 계산되지 않는다.
+    //  ※ 반드시 옵셔널(?.)로 읽는다.
+    //    sliderData 는 zone 응답으로 통째로 교체되므로, 백엔드가 아직 배포되지 않아
+    //    새 슬라이더를 안 내려주면 키가 사라진다. 그때 .value 를 직접 읽으면
+    //    렌더가 통째로 죽어 화면이 하얘진다 (실제로 겪었다 — 프론트만 먼저 배포된 상황)
     }, [
         zoneInfo,
         creditToken,
