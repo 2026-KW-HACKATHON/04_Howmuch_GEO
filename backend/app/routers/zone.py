@@ -129,8 +129,8 @@ async def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
 #부동산 계산식 API 라우터
 async def fetch_land_price_per_m2(pnu: str) -> int:
     try:
-        url = PROXY_URL + "getIndvdLandPrice"
-
+        url = f"{PROXY_URL.rstrip('/')}/getIndvdLandPrice"
+        print(url)
         #numOfRows 를 주지 않으면 기본 10건만 와서 최신 연도가 잘린다.
         #  pageNo 가 없으면 numOfRows 가 무시되므로 둘을 함께 넘긴다
         params = {
@@ -177,8 +177,7 @@ async def fetch_land_characteristics(pnu: str) -> dict:
     
     try:
         time.sleep(VWORLD_CALL_GAP)
-        url = PROXY_URL + "getLandCharacteristics"
-
+        url = f"{PROXY_URL.rstrip('/')}/getLandCharacteristics"
         params = {
             "key": VWORLD_API_KEY,
             "pnu": pnu,
