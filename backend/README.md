@@ -54,16 +54,18 @@ async def get_zone(req: ZoneRequest):
 @router.post(
     "/contribution",
     summary="조합원 개인 분담금 및 사업성 계산")
-async def get_contribution(req: ContributionRequest):
+async def get_contribution(req: ContributionRequest, request: Request):
 ```
 
 # 일일 크레딧
 
 - `GET /api/v1/user/credits` : 로그인한 사용자의 남은 크레딧과 다음 충전 시각을 반환.
 - `POST /api/v1/user/credits/reset` : 로그인한 사용자의 당일 크레딧을 5개로 초기화. 프로필 메뉴에서 실행.
-- `POST /api/v1/zone` : 로그인 필수. 성공한 구역 분석 1회마다 크레딧 1개를 사용.
+- `POST /api/v1/zone` : 로그인 필수. 구역 분석 성공 시 크레딧 차감용 토큰을 발급하지만, 이 단계에서는 차감하지 않음.
+- `POST /api/v1/contribution` : 로그인 필수. 계산과 응답 검증이 모두 성공한 경우 토큰당 크레딧 1개를 차감.
 - 사용자별 하루 5개가 지급되며, 매일 한국 시간 자정에 자동 충전. 잔액은 Redis에 사용자 ID와 날짜를 조합해 저장.
-- `/contribution`의 슬라이더 재계산은 별도 크레딧을 사용하지 않음.
+- 구역 분석 후 발급된 동일 토큰으로 실행되는 슬라이더 재계산은 추가 크레딧을 사용하지 않음.
+- 분담금 계산 또는 응답 검증이 실패하면 크레딧을 차감하지 않음.
 
 # 추가 정보
 

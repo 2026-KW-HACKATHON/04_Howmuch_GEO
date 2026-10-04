@@ -82,6 +82,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
 
     //결과 및 로딩 상태 useState 영역
     const [zoneInfo, setZoneInfo] = useState<ZoneInfo | null>(null);
+    const [creditToken, setCreditToken] = useState<string | null>(null);
     const [calcResult, setCalcResult] = useState<ContributionResult | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [initialCalculationPending, setInitialCalculationPending] = useState<boolean>(false);
@@ -132,6 +133,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
             
             if (data && data.zone) {
                 setZoneInfo(data.zone);
+                setCreditToken(data.credit_token);
                 if (data.zoning_options) {
                     setZoningOptions(data.zoning_options);
                 }
@@ -163,6 +165,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
     //  필지를 여러 개 고르는 동안 매번 서버를 부르면 느리고 중간 결과가 혼란을 준다
     useEffect(() => {
         setZoneCalculated(false);
+        setCreditToken(null);
         if (selectedPnus.length === 0) {
             setZoneInfo(null);
             setCalcResult(null);
@@ -173,7 +176,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
 
     //Contribution 호출 (슬라이더가 바뀔 때마다 자동으로 다시 계산된다)
     const calculate = useCallback(async () => {
-        if (!zoneInfo) return;
+        if (!zoneInfo || !creditToken) return;
 
         setLoading(true);
         setError(null);
@@ -189,6 +192,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
             const sentMemberCount = Number(member_count ?? formData.member_count);
 
             const requestPayload = {
+                credit_token: creditToken,
                 name: formData.name,
                 site_area_m2: zoneInfo.site_area_m2,
                 member_count: sentMemberCount,
@@ -226,6 +230,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
     //    추가한 키가 빠지면 그 슬라이더를 움직여도 다시 계산되지 않는다
     }, [
         zoneInfo,
+        creditToken,
         sliderData.floor_area_ratio.value,
         sliderData.member_count.value,
         sliderData.member_price_ratio.value,

@@ -1,9 +1,9 @@
-from app.exceptions.exceptions_handler import ServiceUnavailableException
+from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException
 from app.cache.redis import redis_client
 from redis.exceptions import RedisError
 from datetime import datetime, time, timedelta
 import logging
-from fastapi import HTTPException, status
+import secrets
 from zoneinfo import ZoneInfo
 
 
@@ -39,6 +39,37 @@ end
 return redis.call('DECR', KEYS[1])
 """
 
+#크레딧이 차감될 계산을 위한 일회성 토큰을 자정까지 보관
+_ISSUE_CREDIT_TOKEN_SCRIPT = """
+return redis.call('SET', KEYS[1], 'pending', 'EX', ARGV[1], 'NX')
+"""
+
+#계산 성공 후 토큰당 한 번만 크레딧을 차감. 같은 구역의 자동 재계산은 기존 차감을 재사용
+_CONSUME_CREDIT_TOKEN_SCRIPT = """
+local token_state = redis.call('GET', KEYS[2])
+local credits = redis.call('GET', KEYS[1])
+if token_state == 'consumed' then
+    if not credits then
+        redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+        credits = ARGV[1]
+    end
+    return tonumber(credits)
+end
+if token_state ~= 'pending' then
+    return -2
+end
+if not credits then
+    redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+    credits = ARGV[1]
+end
+if tonumber(credits) <= 0 then
+    return -1
+end
+credits = redis.call('DECR', KEYS[1])
+redis.call('SET', KEYS[2], 'consumed', 'EX', ARGV[2])
+return credits
+"""
+
 #일일 크레딧 키와 TTL(만료 시간)을 계산하는 함수
 def _daily_key_and_ttl(user_id: int) -> tuple[str, int, datetime]:
 
@@ -57,6 +88,58 @@ def _daily_key_and_ttl(user_id: int) -> tuple[str, int, datetime]:
 
     #Redis 키는 "credits:{user_id}:{YYYY-MM-DD}" 형식으로 생성
     return f"credits:{user_id}:{now:%Y-%m-%d}", ttl_seconds, resets_at
+
+#크레딧을 차감할 수 있는 계산 토큰 발급
+async def issue_credit_token(user_id: int) -> str:
+    daily_key, ttl_seconds, _ = _daily_key_and_ttl(user_id)
+    token = secrets.token_urlsafe(32)
+
+    try:
+        issued = await redis_client.eval(
+            _ISSUE_CREDIT_TOKEN_SCRIPT,
+            1,
+            f"{daily_key}:token:{token}",
+            ttl_seconds,
+        )
+    except RedisError as err:
+        logger.exception("Unable to issue credit token for user %s", user_id)
+        raise ServiceUnavailableException(
+            message="크레딧 정보를 확인할 수 없습니다. 잠시 후 다시 시도해 주세요."
+        ) from err
+
+    if issued is None:
+        raise ServiceUnavailableException(
+            message="계산 토큰을 발급할 수 없습니다. 다시 시도해 주세요."
+        )
+    return token
+
+#계산 성공 후 토큰을 소비. 동일 토큰의 재계산은 추가 차감하지 않는다
+async def consume_credit_token(user_id: int, token: str) -> int:
+    daily_key, ttl_seconds, _ = _daily_key_and_ttl(user_id)
+
+    try:
+        remaining = await redis_client.eval(
+            _CONSUME_CREDIT_TOKEN_SCRIPT,
+            2,
+            daily_key,
+            f"{daily_key}:token:{token}",
+            DAILY_CREDIT_LIMIT,
+            ttl_seconds,
+        )
+    except RedisError as err:
+        logger.exception("Unable to consume credit token for user %s", user_id)
+        raise ServiceUnavailableException(
+            message="크레딧을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요."
+        ) from err
+
+    remaining = int(remaining)
+    if remaining == -1:
+        raise ServiceUnavailableException(
+            message="오늘 사용할 수 있는 크레딧을 모두 사용했습니다."
+        )
+    if remaining == -2:
+        raise BadRequestException("계산 토큰이 만료되었거나 유효하지 않습니다. 구역을 다시 분석해 주세요.")
+    return remaining
 
 #일일 크레딧 정보를 가져오는 함수
 async def get_daily_credits(user_id: int) -> dict[str, int | str]:

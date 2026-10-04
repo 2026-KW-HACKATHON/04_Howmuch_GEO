@@ -63,6 +63,7 @@ class ZoneResponse(BaseModel):
     cost_prediction: Dict[str, Any] = Field(..., description="공사비 예측 데이터")
     sale_prediction: Dict[str, Any] = Field(..., description="분양가 예측 데이터")
     credits_remaining: int = Field(..., description="남은 일일 크레딧")
+    credit_token: str = Field(..., description="성공한 분담금 계산에서 크레딧을 차감하기 위한 토큰")
 
 #분양 평형 스키마
 class ContributionUnitType(BaseModel):
@@ -110,3 +111,4 @@ class ContributionResponse(BaseModel):
     unit_options: List[UnitOption] = Field(..., description="평형별 조합원 분양가 선택지")
     member_count_range: MemberCountRange = Field(..., description="조합원 수 슬라이더 가동 범위")
     warnings: List[str] = Field(default_factory=list, description="사업성 계산 경고 메시지")
+    credits_remaining: int = Field(..., description="남은 일일 크레딧")

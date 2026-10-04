@@ -1,8 +1,9 @@
 from app.config.engine_defaults import DEFAULT_PROJECT_PERIOD_YEARS, ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS,MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
 from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
 from app.schemas.realestate.realestate_response import ContributionResponse
+from app.services.credit_service import consume_credit_token
 from app.utils.slider_builder import build_sliders
-from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException
+from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException, UnauthorizedException
 from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
 from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
 from AI.engine.zone import build_zone_summary
@@ -10,7 +11,7 @@ from AI.predict.construction_cost import predict_cost_per_pyeong
 from AI.predict.sale_price import fetch_trades, predict_sale_price_per_m2
 from dataclasses import asdict
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from typing import List, Optional
 from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
@@ -60,7 +61,11 @@ TRADE_MONTHS = 12
     "/contribution",
     response_model = ContributionResponse,
     summary = "조합원 개인 분담금 및 사업성 계산")
-async def get_contribution(req: ContributionRequest):
+async def get_contribution(req: ContributionRequest, request: Request):
+    user_id = request.session.get("user_id")
+    if user_id is None:
+        raise UnauthorizedException("로그인이 필요합니다.")
+
     try:
         sliders = dict(req.sliders)
 
@@ -129,10 +134,17 @@ async def get_contribution(req: ContributionRequest):
         logger.warning(f"[ Log ] : Contribution API 호출에서 오류 발생 : {str(err)}")
         raise ServiceUnavailableException("Contribution API 호출에서 오류가 발생했습니다.")
 
-    #결과 반환
-    return {
+    #모든 계산 결과를 검증한 뒤에만 크레딧을 차감한다
+    result_payload = {
         **asdict(result),
         "unit_options": [asdict(o) for o in options],
         "member_count_range": asdict(member_range),
         "warnings": result.project.warnings,
     }
+    response = ContributionResponse.model_validate(
+        {**result_payload, "credits_remaining": 0}
+    )
+    credits_remaining = await consume_credit_token(int(user_id), req.credit_token)
+
+    #검증된 응답 모델에 잔액만 반영해 FastAPI 응답 검증 실패로 인한 오차감을 차단
+    return response.model_copy(update={"credits_remaining": credits_remaining})

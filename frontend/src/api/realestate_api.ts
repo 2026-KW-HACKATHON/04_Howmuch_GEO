@@ -27,6 +27,7 @@ export async function getZoneInfo(pnus: string[], options: ZoneInfoOptions = {})
 
 //Contribution 요청 프론트 스키마
 export interface ContributionRequest {
+    credit_token: string;
     name: string;
     site_area_m2: number;
     member_count: number;

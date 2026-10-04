@@ -1,6 +1,6 @@
 from app.config.engine_defaults import ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS, MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
 from app.cache.redis import redis_client
-from app.services.credit_service import consume_daily_credit, ensure_daily_credit_available
+from app.services.credit_service import ensure_daily_credit_available, get_daily_credits, issue_credit_token
 from app.services.zone_service import get_cached_trades, set_cached_trades, get_cached_land, set_cached_land
 from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
 from app.schemas.realestate.realestate_response import ZoneResponse
@@ -350,8 +350,14 @@ async def get_zone(req: ZoneRequest, request: Request):
         "sale_prediction": asdict(sale),
     }
 
-    #남은 크레딧 최신화
-    result["credits_remaining"] = await consume_daily_credit(int(user_id))
+    #실제 차감은 /contribution 계산과 응답 검증이 성공한 후에 진행
+    credits = await get_daily_credits(int(user_id))
+    result["credits_remaining"] = credits["credits_remaining"]
+    result["credit_token"] = "pending"
+    response = ZoneResponse.model_validate(result)
+    response = response.model_copy(
+        update={"credit_token": await issue_credit_token(int(user_id))}
+    )
 
     #결과 반환
-    return result
+    return response
