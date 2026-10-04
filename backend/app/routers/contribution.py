@@ -1,5 +1,6 @@
 from app.config.engine_defaults import DEFAULT_PROJECT_PERIOD_YEARS, ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS,MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
 from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
+from app.schemas.realestate.realestate_response import ContributionResponse
 from app.utils.slider_builder import build_sliders
 from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException
 from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
@@ -57,7 +58,8 @@ TRADE_MONTHS = 12
 #슬라이더 및 추가 변수들로 계산하는 API
 @router.post(
     "/contribution",
-    summary="조합원 개인 분담금 및 사업성 계산")
+    response_model = ContributionResponse,
+    summary = "조합원 개인 분담금 및 사업성 계산")
 async def get_contribution(req: ContributionRequest):
     try:
         sliders = dict(req.sliders)

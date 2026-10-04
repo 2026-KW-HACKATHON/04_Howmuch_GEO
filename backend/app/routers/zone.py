@@ -3,6 +3,7 @@ from app.cache.redis import redis_client
 from app.services.credit_service import consume_daily_credit, ensure_daily_credit_available
 from app.services.zone_service import get_cached_trades, set_cached_trades, get_cached_land, set_cached_land
 from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
+from app.schemas.realestate.realestate_response import ZoneResponse
 from app.utils.slider_builder import build_sliders
 from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException, UnauthorizedException
 from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
@@ -259,7 +260,8 @@ async def fetch_land_characteristics(pnu: str) -> dict:
 #Pnus 정보를 바탕으로 구체적 정보를 받아오는 API
 @router.post(
     "/zone",
-    summary="구역 선택 및 요약 집계"
+    response_model = ZoneResponse,
+    summary = "구역 선택 및 요약 집계"
 )
 async def get_zone(req: ZoneRequest, request: Request):
 

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 import httpx
 import os
 from app.schemas.cadastral.cadastral_request import CadastralRequest
+from app.schemas.cadastral.cadastral_response import CadastralResponse
 from urllib.parse import urlencode
 from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException
 import logging
@@ -16,7 +17,11 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 #필지 데이터 반환 API 엔드포인트
-@router.post("/cadastral")
+@router.post(
+    "/cadastral",
+    response_model = CadastralResponse,
+    summary = "필지 데이터 조회"
+)
 async def get_vworld_cadastral(request: CadastralRequest):
 
     #환경변수 불러오기
@@ -30,7 +35,7 @@ async def get_vworld_cadastral(request: CadastralRequest):
     if not VWORLD_DOMAIN:
         raise BadRequestException("VWORLD_DOMAIN 환경 변수가 설정되지 않았습니다.")
     if not PROXY_URL:
-        raise BadRequestException(="PROXY_URL 환경 변수가 설정되지 않았습니다.")
+        raise BadRequestException("PROXY_URL 환경 변수가 설정되지 않았습니다.")
 
     #요청값에서 geom_filter 추출
     geom_filter = request.geom_filter
