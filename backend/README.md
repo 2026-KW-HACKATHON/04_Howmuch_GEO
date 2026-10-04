@@ -67,6 +67,4 @@ async def get_contribution(req: ContributionRequest):
 
 # 추가 정보
 
-- **V-World** 호출상 테스트 과정에서, 만약 로컬환경에서의 **API** 호출은 작동하지만, **Codespace** 나 **Render** 과 같은 클라우드상의 호출은 차단되는 현상 관측. 클라우드 개발 과정에서 임의로 연결 실패에서는 사전정의 데이터 사용 및 콘솔 출력으로 처리.
-
 - **Pydantic** 을 이용한 **Request** 스키마의 정의로 엄격한 검증 실행.

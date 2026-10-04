@@ -1,7 +1,7 @@
 from dataclasses import asdict
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request, status
-from typing import List, Optional
+from typing import Any, List, Optional
 from app.config.engine_defaults import ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS, MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
 from app.utils.slider_builder import build_sliders
 from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
@@ -19,12 +19,16 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from app.cache.redis import redis_client
 from app.services.credit_service import consume_daily_credit, ensure_daily_credit_available
+from app.services.zone_service import get_cached_trades, set_cached_trades, get_cached_land, set_cached_land
 import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+import logging
 
 #스레드풀 생성
 executor = ThreadPoolExecutor(max_workers=10)
+
+logger = logging.getLogger(__name__)
 
 #부동산 계산식 API 라우터 설정
 router = APIRouter(
@@ -59,54 +63,34 @@ VWORLD_SESSION.mount(
     ),
 )
 
+
+def parse_vworld_response(response: requests.Response, api_name: str) -> dict[str, Any]:
+    content_type = response.headers.get("Content-Type", "unknown")
+    if not response.ok:
+        raise ValueError(
+            f"{api_name} returned HTTP {response.status_code} "
+            f"(content-type={content_type}, bytes={len(response.content)})"
+        )
+
+    try:
+        data = response.json()
+    except requests.exceptions.JSONDecodeError as e:
+        body_preview = " ".join(response.text.split())[:300]
+        raise ValueError(
+            f"{api_name} returned a non-JSON response "
+            f"(HTTP {response.status_code}, content-type={content_type}, "
+            f"bytes={len(response.content)}, body={body_preview!r})"
+        ) from e
+    if not isinstance(data, dict):
+        raise ValueError(f"{api_name} returned JSON with an unexpected top-level type")
+    return data
+
+
 #호출 간격(초)
 VWORLD_CALL_GAP = 0.05
 
 #실거래 조회 기간(개월)
 TRADE_MONTHS = 12
-
-#Redis 를 통한 Trade 캐시 불러오기
-async def get_cached_trades(lawd_cd: str, target_ym: str) -> Optional[list]:
-    cache_key = f"trades:{lawd_cd}:{target_ym}"
-    try:
-        data = await redis_client.get(cache_key)
-        if data:
-            raw_list = json.loads(data)
-            print(f"[Cache HIT] Trade {cache_key}")
-            return [Trade(**item) if isinstance(item, dict) else item for item in raw_list]
-        print(f"[Cache MISS] Trade {cache_key}")
-        return None
-    except Exception as e:
-        print(f"[Warning] Redis Read/Decode Error (Trade {cache_key}): {e}")
-        return None
-
-#Redis 를 통한 Trade 캐시 저장
-async def set_cached_trades(lawd_cd: str, target_ym: str, trades: list):
-    if not trades:
-        return
-    cache_key = f"trades:{lawd_cd}:{target_ym}"
-    try:
-        # Pydantic v2 / Pydantic v1 / Dataclass / 일반 dict 모두 대응하는 직렬화
-        trades_dict = []
-        for trade in trades:
-            if hasattr(trade, "model_dump"):  # Pydantic v2
-                trades_dict.append(trade.model_dump())
-            elif hasattr(trade, "dict"):  # Pydantic v1
-                trades_dict.append(trade.dict())
-            elif is_dataclass(trade):  # @dataclass
-                trades_dict.append(asdict(trade))
-            elif isinstance(trade, dict):  # 이미 dict인 경우
-                trades_dict.append(trade)
-            elif hasattr(trade, "__dict__"):  # 일반 Custom Class
-                trades_dict.append(trade.__dict__)
-            else:
-                trades_dict.append(str(trade))
-
-        serialized_data = json.dumps(trades_dict, ensure_ascii=False)
-        await redis_client.set(cache_key, serialized_data, ex=86400)
-        print(f"[Cache SAVE] Trade {cache_key} (TTL: 86400s)")
-    except Exception as e:
-        print(f"[Warning] Redis Write Error (Trade {cache_key}): {e}")
 
 #분양가 시점 보정용 실거래 목록
 async def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
@@ -129,38 +113,12 @@ async def fetch_recent_trades(lawd_cd: str, target_ym: str) -> list:
         loop = asyncio.get_event_loop()
         trades = await loop.run_in_executor(executor, fetch_trades, lawd_cd, ym_list)
     except Exception as e:
-        print(f"[Warning] 실거래가 조회 실패 {lawd_cd}: {e}")
+        logger.warning(f"[Warning] 실거래가 조회 실패 {lawd_cd}: {e}")
         return []
 
     if trades:
         await set_cached_trades(lawd_cd, target_ym, trades)
     return trades
-
-#Redis 를 통한 Land 캐시 불러오기
-async def get_cached_land(pnu: str) -> Optional[dict]:
-    cache_key = f"land:{pnu}"
-    try:
-        val = await redis_client.get(cache_key)
-        if val:
-            print(f"[Cache HIT] Land {cache_key}")
-            return json.loads(val)
-        print(f"[Cache MISS] Land {cache_key}")
-    except Exception as e:
-        print(f"[Warning] Redis Read/Decode Error (Land {cache_key}): {e}")
-    return None
-
-#Redis 를 통한 Land 캐시 저장하기
-async def set_cached_land(pnu: str, data: dict):
-    if not data:
-        return
-    cache_key = f"land:{pnu}"
-    try:
-        # Land 객체 내 Pydantic/Dataclass가 포함된 경우 대비 ensure_ascii=False 처리
-        serialized_data = json.dumps(data, ensure_ascii=False, default=str)
-        await redis_client.setex(cache_key, 604800, serialized_data)
-        print(f"[Cache SAVE] Land {cache_key} (TTL: 604800s)")
-    except Exception as e:
-        print(f"[Warning] Redis Write Error (Land {cache_key}): {e}")
 
 #부동산 계산식 API 라우터
 async def fetch_land_price_per_m2(pnu: str) -> int:
@@ -177,9 +135,9 @@ async def fetch_land_price_per_m2(pnu: str) -> int:
             "numOfRows": 30,
             "pageNo": 1,
         }
-
+        logger.info(f"[Log] Fetching land price for PNU {pnu}")
         response = VWORLD_SESSION.get(url, params=params, timeout=5)
-        data = response.json()
+        data = parse_vworld_response(response, "getIndvdLandPrice")
 
         rows = data.get("indvdLandPrices", {}).get("field", [])
         if isinstance(rows, dict):
@@ -191,10 +149,10 @@ async def fetch_land_price_per_m2(pnu: str) -> int:
             latest = max(rows, key=lambda row: str(row.get("stdrYear", "")))
             price = latest.get("pblntfPclnd")
         
-        print(f"[ Log ] : Land Price for PNU {pnu} is {price}")
+        logger.info(f"[Log] Land Price for PNU {pnu} is {price}")
         return int(price) if price else 0
     except Exception as e:
-        print(f"[Warning] get_land_price_per_m2 오류 (Price): {e}")
+        logger.warning(f"[Warning] get_land_price_per_m2 오류 (Price): {e}")
         return 0
 
 #부동산 계산식 API 라우터
@@ -224,9 +182,9 @@ async def fetch_land_characteristics(pnu: str) -> dict:
             "pageNo": 1,
         }
         response = VWORLD_SESSION.get(url, params=params, timeout=5)
-        data = response.json()
+        data = parse_vworld_response(response, "getLandCharacteristics")
         
-        rows = data.get("landCharacteristicss", {}).get("field", [])
+        rows = data.get("landCharacteristics", {}).get("field", [])
         if isinstance(rows, dict):
             rows = [rows]
         
@@ -252,7 +210,7 @@ async def fetch_land_characteristics(pnu: str) -> dict:
         return result
         
     except Exception as e:
-        print(f"[Warning] V-World Land Characteristics API 오류 {pnu}: {e}")
+        logger.warning(f"[Warning] V-World Land Characteristics API 오류 {pnu}: {e}")
         return default_data
 
 #Pnus 정보를 바탕으로 구체적 정보를 받아오는 API
