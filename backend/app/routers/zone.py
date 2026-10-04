@@ -1,33 +1,34 @@
-from dataclasses import asdict
-from datetime import datetime
-from fastapi import APIRouter, HTTPException, Request, status
-from typing import Any, List, Optional
 from app.config.engine_defaults import ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS, MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
+from app.cache.redis import redis_client
+from app.services.credit_service import consume_daily_credit, ensure_daily_credit_available
+from app.services.zone_service import get_cached_trades, set_cached_trades, get_cached_land, set_cached_land
+from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
 from app.utils.slider_builder import build_sliders
 from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
 from AI.engine.zone import SELECTABLE_ZONING, build_zone_summary
 from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
 from AI.predict.construction_cost import predict_cost_per_pyeong
 from AI.predict.sale_price import Trade, fetch_trades, predict_sale_price_per_m2
-from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
+from datetime import datetime
 from dotenv import load_dotenv
 from dataclasses import is_dataclass, asdict
+from fastapi import APIRouter, HTTPException, Request, status
+from requests.adapters import HTTPAdapter
+from typing import Any, List, Optional
+from urllib3.util.retry import Retry
+import asyncio
+import json
+import logging
 import os
 import requests
 import time
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-from app.cache.redis import redis_client
-from app.services.credit_service import consume_daily_credit, ensure_daily_credit_available
-from app.services.zone_service import get_cached_trades, set_cached_trades, get_cached_land, set_cached_land
-import json
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-import logging
 
 #스레드풀 생성
 executor = ThreadPoolExecutor(max_workers=10)
 
+#백엔드 Logger
 logger = logging.getLogger(__name__)
 
 #부동산 계산식 API 라우터 설정
@@ -38,18 +39,24 @@ router = APIRouter(
 
 #환경 변수 로드
 load_dotenv()
+
+#환경 변수 가져오기
 VWORLD_API_KEY = os.getenv("VWORLD_API_KEY")
 VWORLD_DOMAIN = os.getenv("VWORLD_DOMAIN")
 PROXY_URL = os.getenv("PROXY_URL")
 
-
+#환경 변수 검증
+if not VWORLD_API_KEY:
+    raise ValueError("VWORLD_API_KEY 환경 변수가 설정되지 않았습니다.")
+if not VWORLD_DOMAIN:
+    raise ValueError("VWORLD_DOMAIN 환경 변수가 설정되지 않았습니다.")
 if not PROXY_URL:
     raise ValueError("PROXY_URL 환경 변수가 설정되지 않았습니다.")
 
+#PROXY_URL zone.py 용으로 변경 (/ned/data/)
 PROXY_URL = f"{PROXY_URL.rstrip('/')}/ned/data/"
 
-
-#V-World 데이터 API 세션
+#V-World 데이터 API 세션 (재시도 설정)
 VWORLD_SESSION = requests.Session()
 VWORLD_SESSION.mount(
     "https://",
@@ -63,7 +70,7 @@ VWORLD_SESSION.mount(
     ),
 )
 
-
+#부동산 계산식 API 응답 파싱
 def parse_vworld_response(response: requests.Response, api_name: str) -> dict[str, Any]:
     content_type = response.headers.get("Content-Type", "unknown")
     if not response.ok:
@@ -71,7 +78,6 @@ def parse_vworld_response(response: requests.Response, api_name: str) -> dict[st
             f"{api_name} returned HTTP {response.status_code} "
             f"(content-type={content_type}, bytes={len(response.content)})"
         )
-
     try:
         data = response.json()
     except requests.exceptions.JSONDecodeError as e:
@@ -138,7 +144,7 @@ async def fetch_land_price_per_m2(pnu: str) -> int:
         logger.info(f"[Log] Fetching land price for PNU {pnu}")
         response = VWORLD_SESSION.get(url, params=params, timeout=5)
         data = parse_vworld_response(response, "getIndvdLandPrice")
-
+        print("fetch_land_price_per_m2 : ", response)
         rows = data.get("indvdLandPrices", {}).get("field", [])
         if isinstance(rows, dict):
             rows = [rows]
@@ -183,8 +189,7 @@ async def fetch_land_characteristics(pnu: str) -> dict:
         }
         response = VWORLD_SESSION.get(url, params=params, timeout=5)
         data = parse_vworld_response(response, "getLandCharacteristics")
-        
-        rows = data.get("landCharacteristics", {}).get("field", [])
+        rows = data.get("landCharacteristicss", {}).get("field", [])
         if isinstance(rows, dict):
             rows = [rows]
         
@@ -238,6 +243,7 @@ async def get_zone(req: ZoneRequest, request: Request):
         for p in req.pnus:
             hint = hints.get(p)
             land_data = await fetch_land_characteristics(p)
+            print(land_data)
 
             #용도지역 조회가 실패하면 제2종일반주거로 가정된다. 용적률이 왜곡되므로 알려준다
             if land_data.get("fallback"):
