@@ -3,6 +3,7 @@
 import KakaoMap from "../components/KakaoMap"
 import SideBar from '../components/SideBar';
 import ModelPredictForm from '../components/ModelPredictForm';
+import NewsPanel from '../components/NewsPanel';
 import ReCAPTCHA from 'react-google-recaptcha';
 import { useMainPage } from '../hooks/useMainPage';
 import { useEffect, useRef, useState } from 'react';
@@ -10,6 +11,8 @@ import { useEffect, useRef, useState } from 'react';
 //메인 페이지
 export default function MainPage() {
     const [isProfileOpen, setIsProfileOpen] = useState(false);
+    const [activePanel, setActivePanel] = useState<'news' | 'prediction'>('news');
+    const [regionName, setRegionName] = useState('');
     const profileRef = useRef<HTMLDivElement>(null);
 
     //MainPage Hook 사용
@@ -63,6 +66,7 @@ export default function MainPage() {
                 <KakaoMap
                     onLoadCadastralData={handleCadastralData}
                     onSelectionChange={handleSelectionChange}
+                    onRegionNameChange={setRegionName}
                 />
             </main>
 
@@ -109,9 +113,19 @@ export default function MainPage() {
             </div>
 
             {/* 사이드바 영역 */}
-            <SideBar isOpen={isOpen} onToggleSidebar={toggleSidebar} 
+            <SideBar
+                isOpen={isOpen}
+                onToggleSidebar={toggleSidebar}
+                activePanel={activePanel}
+                onPanelChange={setActivePanel}
                 children={
-                    <ModelPredictForm onHandleZoneData={handleZoneData} onCalculateContribution={handleContributionData} isOpen={isOpen} selectedPnus={selectedPnus} dailyCredits={dailyCredits} creditsUnavailable={creditsUnavailable}/>
+                    <>
+                        {activePanel === 'news' ? (
+                            <NewsPanel onNewsPanelOpen={activePanel === 'news'} query={regionName}/>
+                        ) : (
+                            <ModelPredictForm onHandleZoneData={handleZoneData} onCalculateContribution={handleContributionData} isOpen={isOpen} selectedPnus={selectedPnus} dailyCredits={dailyCredits} creditsUnavailable={creditsUnavailable}/>
+                        )}
+                    </>
                 }
             />               
         </div>
