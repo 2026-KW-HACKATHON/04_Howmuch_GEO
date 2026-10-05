@@ -44,7 +44,7 @@ if not KAKAO_API_KEY:
     status_code = status.HTTP_200_OK,
 )
 async def get_region_news(request: NewsRequest):
-    search_keyword = f"{request.query} 재개발"
+    search_keyword = f"{request.query}"
 
     url = f"https://dapi.kakao.com/v2/search/web?query={search_keyword}&sort=recency&size=8"
 
