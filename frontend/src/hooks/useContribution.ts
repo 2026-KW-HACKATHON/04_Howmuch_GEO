@@ -36,6 +36,7 @@ export interface ContributionResult {
     unit_options: UnitOption[];
     member_count_range?: MemberCountRange;
     warnings: string[];
+    credits_remaining: number;
 }
 
 //구역 정보 (/zone 응답의 zone)

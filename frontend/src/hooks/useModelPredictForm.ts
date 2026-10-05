@@ -82,6 +82,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
 
     //결과 및 로딩 상태 useState 영역
     const [zoneInfo, setZoneInfo] = useState<ZoneInfo | null>(null);
+    const [creditToken, setCreditToken] = useState<string | null>(null);
     const [calcResult, setCalcResult] = useState<ContributionResult | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
     const [initialCalculationPending, setInitialCalculationPending] = useState<boolean>(false);
@@ -132,6 +133,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
             
             if (data && data.zone) {
                 setZoneInfo(data.zone);
+                setCreditToken(data.credit_token);
                 if (data.zoning_options) {
                     setZoningOptions(data.zoning_options);
                 }
@@ -163,6 +165,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
     //  필지를 여러 개 고르는 동안 매번 서버를 부르면 느리고 중간 결과가 혼란을 준다
     useEffect(() => {
         setZoneCalculated(false);
+        setCreditToken(null);
         if (selectedPnus.length === 0) {
             setZoneInfo(null);
             setCalcResult(null);
@@ -173,7 +176,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
 
     //Contribution 호출 (슬라이더가 바뀔 때마다 자동으로 다시 계산된다)
     const calculate = useCallback(async () => {
-        if (!zoneInfo) return;
+        if (!zoneInfo || !creditToken) return;
 
         setLoading(true);
         setError(null);
@@ -189,6 +192,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
             const sentMemberCount = Number(member_count ?? formData.member_count);
 
             const requestPayload = {
+                credit_token: creditToken,
                 name: formData.name,
                 site_area_m2: zoneInfo.site_area_m2,
                 member_count: sentMemberCount,
@@ -229,16 +233,17 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
     //    렌더가 통째로 죽어 화면이 하얘진다 (실제로 겪었다 — 프론트만 먼저 배포된 상황)
     }, [
         zoneInfo,
-        sliderData.floor_area_ratio?.value,
-        sliderData.member_count?.value,
-        sliderData.member_price_ratio?.value,
-        sliderData.other_cost_ratio?.value,
-        sliderData.commercial_ratio?.value,
-        sliderData.construction_cost_per_pyeong?.value,
-        sliderData.general_price_per_m2?.value,
-        sliderData.parking_per_household?.value,
-        sliderData.rental_floor_band?.value,
-        sliderData.project_period_years?.value,
+        creditToken,
+        sliderData.floor_area_ratio.value,
+        sliderData.member_count.value,
+        sliderData.member_price_ratio.value,
+        sliderData.other_cost_ratio.value,
+        sliderData.commercial_ratio.value,
+        sliderData.construction_cost_per_pyeong.value,
+        sliderData.general_price_per_m2.value,
+        sliderData.parking_per_household.value,
+        sliderData.rental_floor_band.value,
+        sliderData.project_period_years.value,
         ownerData.desired_unit,
         formData.name,
         formData.member_count,

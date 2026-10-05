@@ -30,6 +30,7 @@ class OwnerRequestDTO(BaseModel):
 #Contribution 요청 스키마
 class ContributionRequest(BaseModel):
     name: Optional[str] = "사용자 지정 구역"
+    credit_token: str = Field(..., min_length=32, max_length=64, description="구역 분석에서 발급한 크레딧 차감 토큰")
     site_area_m2: float
     member_count: int
     far_base: float = Field(..., description="조례 기준 용적률(%). ZoneSummary.far_min 을 그대로 넘긴다 (슬라이더 아님)")

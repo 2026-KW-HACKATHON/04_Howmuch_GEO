@@ -158,6 +158,10 @@ export const useMainPage = () => {
     const handleContributionData = useCallback(async (requestData: any) => {
         try {
             const response = await getContributionInfo(requestData);
+            if (Number.isInteger(response.credits_remaining)) {
+                setDailyCredits(response.credits_remaining);
+                setCreditsUnavailable(false);
+            }
             return response;
         } catch (err) {
             console.log("[ handleContributionData 오류 발생 ] : ", err);

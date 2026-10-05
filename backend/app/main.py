@@ -23,14 +23,6 @@ load_dotenv()
 #환경 변수 로드
 FRONTEND_URL = os.getenv("FRONTEND_URL")
 COOKIE_SECRET_KEY = os.getenv("COOKIE_SECRET_KEY")
-CADASTRAL_DATA_DIR = os.getenv("CADASTRAL_DATA_DIR")
-CADASTRAL_DATA_URL = os.getenv("CADASTRAL_DATA_URL")
-CADASTRAL_DATA_PATH = os.path.join(CADASTRAL_DATA_DIR, "mock_data.py")
-
-#CADASTRAL_DATA_DIR 디렉터리 생성 및 mock_data.py 파일 다운로드
-os.makedirs(CADASTRAL_DATA_DIR, exist_ok=True)
-if not os.path.exists(CADASTRAL_DATA_PATH):
-    gdown.download(CADASTRAL_DATA_URL, CADASTRAL_DATA_PATH, quiet=False)
 
 #FastAPI 객체 생성
 app = FastAPI()
