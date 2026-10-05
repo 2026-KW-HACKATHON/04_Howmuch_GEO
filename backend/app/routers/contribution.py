@@ -1,4 +1,12 @@
-from app.config.engine_defaults import DEFAULT_PROJECT_PERIOD_YEARS, ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS,MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
+from app.config.engine_defaults import (
+    DEFAULT_PROJECT_PERIOD_YEARS,
+    ENGINE_DEFAULTS,
+    ENGINE_DEFAULTS_FOR_PARAMS,
+    LAND_PRICE_ANNUAL_RATE,
+    MEMBER_COUNT_UNKNOWN_MIN_RATIO,
+    PRIOR_ASSET_LEAD_YEARS,
+    UNIT_MIX,
+)
 from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
 from app.schemas.realestate.realestate_response import ContributionResponse
 from app.services.credit_service import consume_credit_token
@@ -7,8 +15,9 @@ from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavai
 from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
 from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
 from AI.engine.zone import build_zone_summary
-from AI.predict.construction_cost import predict_cost_per_pyeong
-from AI.predict.sale_price import fetch_trades, predict_sale_price_per_m2
+from AI.predict import trend
+from AI.predict.construction_cost import load_index, predict_cost_per_pyeong
+from AI.predict.sale_price import escalate as escalate_sale, fetch_trades, predict_sale_price_per_m2
 from dataclasses import asdict
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request, status
@@ -96,11 +105,11 @@ async def get_contribution(req: ContributionRequest, request: Request):
                     1,
                 )
 
+            #분양가도 공사비와 같은 방식 — 지수 파일로 보정한다.
+            #  예전에는 측정값(연 8.03%)을 상수로 박아뒀는데 지역·시점이 고정되는 문제가 있었다
             if "general_price_per_m2" in sliders:
                 sliders["general_price_per_m2"] = round(
-                    trend.escalate(
-                        sliders["general_price_per_m2"], now_ym, target_ym, SALE_PRICE_ANNUAL_RATE
-                    ),
+                    escalate_sale(sliders["general_price_per_m2"], now_ym, target_ym),
                     2,
                 )
 

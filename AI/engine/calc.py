@@ -1,5 +1,6 @@
 from dataclasses import dataclass, replace
 
+from AI.engine.prior_asset import BuildingSpec, building_value
 from AI.engine.rental_cost import standard_build_cost_per_m2
 from AI.engine.schema import(
     PER_PYEONG_TO_PER_M2,
@@ -22,13 +23,43 @@ from AI.engine.schema import(
 #  단일 배수로 두면 개인·구역에 같은 값이 들어가 분담금에서 약분되므로,
 #  분리해야 "내 건물이 구역 평균보다 덜 낡았나" 가 분담금에 반영된다.
 def estimate_prior_asset(owner: OwnerInput) -> float:
+    #감정평가 통지서를 받은 조합원은 그 값이 가장 정확하다
     if owner.appraisal_value is not None:
         return owner.appraisal_value
+
+    #토지분 : 공시가격(또는 면적×공시지가) × 보정률
+    #  보정률(appraisal_ratio)은 시점수정·지역요인·개별요인·그 밖의 요인 보정을 묶은 값이다
     if owner.official_price is not None:
-        return owner.official_price * owner.appraisal_ratio
-    if owner.land_area_m2 is not None and owner.land_price_per_m2 is not None:
-        return (owner.land_area_m2 * owner.land_price_per_m2 / 10000) * owner.appraisal_ratio
-    raise ValueError("(감정평가액), (공시가격), (토지면적, 공시지가) 중 하나는 입력해야 합니다.")
+        land = owner.official_price * owner.appraisal_ratio * owner.exclusive_share
+    elif owner.land_area_m2 is not None and owner.land_price_per_m2 is not None:
+        land = (
+            owner.land_area_m2 * owner.land_price_per_m2 / 10000
+            * owner.appraisal_ratio * owner.exclusive_share
+        )
+    else:
+        raise ValueError("(감정평가액), (공시가격), (토지면적, 공시지가) 중 하나는 입력해야 합니다.")
+
+    #건물분 : 원가법 (재조달원가 × 잔존율). 건축물대장 정보가 없으면 0 = 나대지로 본다
+    #  건물을 분리하지 않으면 개인·구역에 같은 배수가 들어가 분담금에서 약분된다.
+    #  분리하면 "내 건물이 구역 평균보다 덜 낡았나" 가 권리가액에 반영된다
+    #  (같은 토지 4.5억이어도 2015년 신축이면 +18.8%, 나대지면 −13.7%)
+    if (
+        owner.building_area_m2
+        and owner.building_elapsed_years is not None
+        and owner.replacement_cost_per_m2
+    ):
+        building = building_value(
+            BuildingSpec(
+                structure=owner.building_structure or "",
+                floor_area_m2=owner.building_area_m2,
+                elapsed_years=owner.building_elapsed_years,
+            ),
+            owner.replacement_cost_per_m2,
+        ) * owner.exclusive_share
+    else:
+        building = 0.0
+
+    return land + building
 
 # 면적
 @dataclass 
