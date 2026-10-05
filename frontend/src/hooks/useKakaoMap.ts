@@ -55,7 +55,7 @@ export const useKakaoMap = (onLoadCadastralData : CadastralDataLoader) => {
 
         const useDistrictType = (window as any).kakao.maps.MapTypeId.USE_DISTRICT;
         map.addOverlayMapTypeId(useDistrictType);
-        const geocoder = new window.kakao.maps.services.Geocoder();
+        const geocoder = new (window as any).kakao.maps.services.Geocoder();
 
         const fetchCadastralData = async (geomFilter: any) => {
             try {
@@ -116,9 +116,9 @@ export const useKakaoMap = (onLoadCadastralData : CadastralDataLoader) => {
         const fetchRegionName = () => {
             const center = map.getCenter();
             
-            geocoder.coord2RegionCode(center.getLng(), center.getLat(), (result, status) => {
-                if (status === window.kakao.maps.services.Status.OK) {
-                    const regionH = result.find((item) => item.region_type === 'H');
+            geocoder.coord2RegionCode(center.getLng(), center.getLat(), (result: any, status: any) => {
+                if (status === (window as any).kakao.maps.services.Status.OK) {
+                    const regionH = result.find((item: any) => item.region_type === 'H');
                     if (regionH) {
                         setRegionName(regionH.address_name);
                         console.log("[ fetchRegionName ] regionName: ", regionH.address_name);
