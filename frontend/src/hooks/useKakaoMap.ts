@@ -11,6 +11,7 @@ export const useKakaoMap = (onLoadCadastralData : CadastralDataLoader) => {
 
     const [map, setMap] = useState<any>(null);
     const [selectedPnus, setSelectedPnus] = useState<string[]>([]);
+    const [regionName, setRegionName] = useState('');
 
     const selectedPnusRef = useRef<string[]>(selectedPnus);
     selectedPnusRef.current = selectedPnus;
@@ -54,6 +55,7 @@ export const useKakaoMap = (onLoadCadastralData : CadastralDataLoader) => {
 
         const useDistrictType = (window as any).kakao.maps.MapTypeId.USE_DISTRICT;
         map.addOverlayMapTypeId(useDistrictType);
+        const geocoder = new (window as any).kakao.maps.services.Geocoder();
 
         const fetchCadastralData = async (geomFilter: any) => {
             try {
@@ -111,8 +113,23 @@ export const useKakaoMap = (onLoadCadastralData : CadastralDataLoader) => {
             }
         };
 
+        const fetchRegionName = () => {
+            const center = map.getCenter();
+            
+            geocoder.coord2RegionCode(center.getLng(), center.getLat(), (result: any, status: any) => {
+                if (status === (window as any).kakao.maps.services.Status.OK) {
+                    const regionH = result.find((item: any) => item.region_type === 'H');
+                    if (regionH) {
+                        setRegionName(regionH.address_name);
+                        console.log("[ fetchRegionName ] regionName: ", regionH.address_name);
+                    }
+                }
+            });
+        };
+
         //지도 움직임 Handler
         const handleMapMovement = async () => {
+            fetchRegionName();
             const currentLevel = map.getLevel();
             if (currentLevel > 2) {
                 Object.values(polygonsRef.current).forEach((poly: any) => poly.setMap(null));
@@ -130,9 +147,11 @@ export const useKakaoMap = (onLoadCadastralData : CadastralDataLoader) => {
         };
 
         handleMapMovement();
+        (window as any).kakao.maps.event.addListener(map, 'idle', fetchRegionName);
         (window as any).kakao.maps.event.addListener(map, 'idle', handleMapMovement);
 
         return () => {
+            (window as any).kakao.maps.event.removeListener(map, 'idle', fetchRegionName);
             (window as any).kakao.maps.event.removeListener(map, 'idle', handleMapMovement);
         };
     }, [map]);
@@ -153,6 +172,7 @@ export const useKakaoMap = (onLoadCadastralData : CadastralDataLoader) => {
         map,
         selectedPnus,
         setSelectedPnus,
+        regionName,
         featuresMapRef,
     };
 };

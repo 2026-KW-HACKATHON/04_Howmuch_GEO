@@ -186,6 +186,6 @@ export const useMainPage = () => {
         dailyCredits,
         creditsUnavailable,
         resettingCredits,
-        resetCreditsAction,
+        resetCreditsAction
     };
 }
