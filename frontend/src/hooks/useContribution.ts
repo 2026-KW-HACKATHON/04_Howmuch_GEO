@@ -103,8 +103,13 @@ export function buildMetrics(
             sliderKey: 'construction_cost_per_pyeong',
         },
         { label: '총사업비', value: toEok(project?.total_cost ?? 0) },
-        //비례율은 조절값이 아니라 사업 수지로 계산되는 결과값이다
-        { label: '비례율', value: `${(result?.proportional_rate ?? 0).toFixed(1)}%` },
+        //비례율은 화면에 띄우지 않는다 (2026-10-05 결정).
+        //  분담금에는 영향이 없고(개인·구역에 같은 보정률이 들어가 약분된다),
+        //  사업기간을 길게 잡을수록 값이 치솟아 오해를 부른다 (13년 247% / 18년 308%).
+        //  실제 관리처분 비례율이 80~120% 인 것은 조합이 법인세 부담 때문에 조정하기도 해서다.
+        //  우리 값은 "조정 전 날것의 사업성" 이라 성격이 다르다.
+        //  사업 종료 시점까지로 범위를 넓히면 더 뛸 값이라 아예 빼는 편이 낫다.
+        //  (응답 ProjectResult.proportional_rate 는 유지 — 권리가액 계산과 디버깅에 쓴다)
         {
             label: '일반분양',
             value: `${Math.max(saleCount - members, 0).toLocaleString()}세대`,

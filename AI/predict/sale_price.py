@@ -27,6 +27,7 @@ API_URL = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvc
 
 DATA_DIR = Path(__file__).parent / "data"
 CASES_CSV = DATA_DIR / "sale_cases.csv"      # 인근 분양 사례
+INDEX_CSV = DATA_DIR / "sale_index.csv"      # 아파트 실거래가지수 (2020년 평균 = 100)
 TRADES_CACHE = DATA_DIR / "trades_cache.json"  # 실거래 조회 결과 캐시
     
 #전용면적 ÷ 공급면적. 아파트마다 다르지만 통상 0.72~0.78
@@ -162,7 +163,7 @@ def fetch_trades(lawd_cd: str, ym_list: list[str], service_key: str | None = Non
 #
 #  여기서 쓰는 창은 공사비·사업기간 보정과 다르다. 일부러 다르다.
 #    이 함수      최근 실거래(기본 12개월) → 분양 사례를 "지금" 으로 당긴다 (단기, 지역 시세)
-#    contribution SALE_PRICE_ANNUAL_RATE(10년 창) → 지금을 "사업기간 뒤" 로 민다 (장기)
+#    escalate()  sale_index.csv (20년 창)       → 지금을 "사업기간 뒤" 로 민다 (장기)
 #  단기 보정에 10년 평균을 쓰면 최근 시세 변화를 못 잡고,
 #  장기 보정에 12개월 추세를 쓰면 복리로 폭주한다 (공사비에서 실제로 겪었다 — 연 10.16%).
 #
@@ -190,6 +191,30 @@ def _monthly_rate(trades: list[Trade], exclusive_ratio: float) -> tuple[float, s
         capped = MAX_MONTHLY_RATE if rate > 0 else -MAX_MONTHLY_RATE
         return capped, f"실거래 추세가 월 {rate * 100:+.2f}% 로 과도해 월 {MAX_MONTHLY_RATE * 100:.1f}% 로 제한했습니다."
     return rate, None
+
+
+#실거래가지수 표. 건설공사비지수(cost_index.csv)와 같은 역할이다
+def load_index(path: Path = INDEX_CSV) -> dict[str, float]:
+    with open(path, encoding="utf-8") as f:
+        lines = [ln for ln in f if ln.strip() and not ln.lstrip().startswith("#")]
+    return {row["ym"]: float(row["index"]) for row in csv.DictReader(lines)}
+
+
+#장기 분양가 상승률 (연율).
+#  예전에는 측정값을 SALE_PRICE_ANNUAL_RATE 상수로 코드에 박아뒀는데,
+#  그러면 지역·시점이 고정되고 갱신하려면 사람이 코드를 고쳐야 했다.
+#  지수 파일을 두고 trend.py 가 매번 회귀하게 하면 데이터만 갈아끼우면 된다.
+#
+#  _monthly_rate 와 역할이 다르다 — 이쪽은 장기(사업기간 보정), 저쪽은 단기(사례 현재화)다
+def annual_rate(index: dict[str, float] | None = None) -> float:
+    return trend.estimate_annual_rate(index or load_index()).annual_rate
+
+
+#지수로 값을 시점 이동한다. 사업기간 보정에 쓴다
+def escalate(price: float, from_ym: str, to_ym: str, index: dict[str, float] | None = None) -> float:
+    index = index or load_index()
+    rate = trend.estimate_annual_rate(index).annual_rate
+    return price * trend.index_at(to_ym, index, rate) / trend.index_at(from_ym, index, rate)
 
 
 #분양가 예측. 분양 사례가 있으면 그것을 쓰고, 없으면 실거래 시세에 계수를 곱한다

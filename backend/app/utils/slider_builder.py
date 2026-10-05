@@ -1,4 +1,5 @@
 from AI.engine.rental_cost import DEFAULT_FLOOR_BAND, FLOOR_BANDS
+from AI.engine.zone import COMMERCIAL_RATIO_MAX, DEFAULT_COMMERCIAL_RATIO_MAX
 from AI.engine.schema import ZoneSummary
 from AI.predict.construction_cost import CostPrediction
 from AI.predict.sale_price import SalePrediction
@@ -17,6 +18,9 @@ def build_sliders(
     project_type: str = "재개발",
     sale: SalePrediction | None = None,
 ) -> dict:
+    #용도지역별 상가 비율 상한. 구역 대표 용도지역을 모르면 2·3종 일반주거 기준을 쓴다
+    commercial_max = COMMERCIAL_RATIO_MAX.get(zone.zoning or "", DEFAULT_COMMERCIAL_RATIO_MAX)
+
     sliders = {
         "floor_area_ratio": {"value": zone.far_min, "min": zone.far_min, "max": zone.far_max},
         #조합원 분양가 비율 : 일반분양가 대비 배수. 조합 총회 의결 사항
@@ -31,8 +35,12 @@ def build_sliders(
         #상가 비율 : 지상 연면적 중 근린생활시설 몫
         #  기본 0.02 — 재개발 대단지 실측 1.8~2.4% 이고, 준공 4개 단지로 면적 체인을 검증했을 때
         #  0.02 에서 세대수 평균오차가 -0.5% 로 가장 작았다 (0 이면 +1.4%, 0.05 면 -3.6%)
-        #  상한은 용도지역별로 따로 정한다 (전용 0.03 / 1종 0.05 / 2·3종 0.10 / 준주거 0.30)
-        "commercial_ratio": {"value": 0.02, "min": 0.0, "max": 0.2},
+        #  상한은 용도지역별로 다르다 (전용 0.03 / 1종 0.05 / 2·3종 0.10 / 준주거 0.30)
+        "commercial_ratio": {
+            "value": min(0.02, commercial_max),
+            "min": 0.0,
+            "max": commercial_max,
+        },
         "construction_cost_per_pyeong": {
             "value": cost.cost_per_pyeong,
             "min": cost.slider_min,

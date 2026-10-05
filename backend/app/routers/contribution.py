@@ -9,7 +9,6 @@ from app.config.engine_defaults import (
     LAND_PRICE_ANNUAL_RATE,
     MEMBER_COUNT_UNKNOWN_MIN_RATIO,
     PRIOR_ASSET_LEAD_YEARS,
-    SALE_PRICE_ANNUAL_RATE,
     UNIT_MIX,
 )
 from app.utils.slider_builder import build_sliders
@@ -18,7 +17,7 @@ from AI.engine.zone import build_zone_summary
 from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
 from AI.predict import trend
 from AI.predict.construction_cost import load_index, predict_cost_per_pyeong
-from AI.predict.sale_price import fetch_trades, predict_sale_price_per_m2
+from AI.predict.sale_price import escalate as escalate_sale, fetch_trades, predict_sale_price_per_m2
 from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
 from dotenv import load_dotenv
 import os
@@ -94,11 +93,11 @@ async def get_contribution(req: ContributionRequest):
                     1,
                 )
 
+            #분양가도 공사비와 같은 방식 — 지수 파일로 보정한다.
+            #  예전에는 측정값(연 8.03%)을 상수로 박아뒀는데 지역·시점이 고정되는 문제가 있었다
             if "general_price_per_m2" in sliders:
                 sliders["general_price_per_m2"] = round(
-                    trend.escalate(
-                        sliders["general_price_per_m2"], now_ym, target_ym, SALE_PRICE_ANNUAL_RATE
-                    ),
+                    escalate_sale(sliders["general_price_per_m2"], now_ym, target_ym),
                     2,
                 )
 

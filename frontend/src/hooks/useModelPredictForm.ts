@@ -60,7 +60,9 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         member_price_ratio: { value: 0.8, min: 0.75, max: 0.95 },
         other_cost_ratio: { value: 0.35, min: 0.25, max: 0.45 },
         parking_per_household: { value: 1.3, min: 1.0, max: 2.0 },
-        commercial_ratio: { value: 0.02, min: 0.0, max: 0.2 },
+        //상한은 용도지역별로 다르다 (전용 0.03 / 1종 0.05 / 2·3종 0.10 / 준주거 0.30).
+        //  서버가 zone 응답에서 대표 용도지역에 맞는 max 를 내려주므로 여기 값은 그때 교체된다
+        commercial_ratio: { value: 0.02, min: 0.0, max: 0.1 },
         construction_cost_per_pyeong: { value: 850, min: 700, max: 1000 },
         general_price_per_m2: { value: 998.25, min: 700, max: 1300 },
         rental_floor_band: { value: '11~20층', options: ['5층 이하', '6~10층', '11~20층', '21층 이상'] },

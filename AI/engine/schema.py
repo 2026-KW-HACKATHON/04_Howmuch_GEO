@@ -131,6 +131,8 @@ class ZoneSummary:
     pnus : list[str]            # 선택된 필지 목록
     warnings : list[str] = field(default_factory=list) # 특정 조건 시 warning 문구 띄움
     region : str | None = None  # 공사비 예측을 위한 해당 지역 이름, 예측 모듈에 넘길 지역 (L1)
+    #대표 용도지역 (면적이 가장 넓은 것). 용적률 범위와 상가 비율 상한을 정하는 데 쓴다 (L1)
+    zoning : str | None = None
 
 
 #조합원 개인 입력값
@@ -144,6 +146,14 @@ class OwnerInput:
     official_price: float | None = None     # 주택/공동주택 공시가격(만원) (L1)
     land_area_m2: float | None = None       # 토지 지분면적 (L1)
     land_price_per_m2: float | None = None  # 개별공시지가(원/㎡) (L1)
+
+    # 건물 정보 (건축물대장). 있으면 종전자산을 토지분 + 건물분으로 나눠 계산한다.
+    #   없으면 건물분 0 = 나대지로 보고 토지분만 쓴다 (기존 동작과 같다)
+    building_structure: str | None = None    # strctCdNm (예: "철근콘크리트구조") (L1)
+    building_area_m2: float | None = None    # 연면적(㎡). 집합건물이면 share 로 나눈다 (L1)
+    building_elapsed_years: float | None = None  # 경과연수 = 평가시점 − 사용승인일 (L1)
+    exclusive_share: float = 1.0             # 집합건물에서 내 몫 (전유면적 ÷ 건물 전유합계) (L1)
+    replacement_cost_per_m2: float | None = None  # ㎡당 재조달원가(만원). 공사비 예측값 (L3)
 
     # 공시가격 → 종전자산 환산 배수.
     #   단일 배수는 개인·구역에 같은 값이 들어가 분담금에서 약분된다(수치 검증됨).
