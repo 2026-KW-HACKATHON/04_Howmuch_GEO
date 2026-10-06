@@ -11,6 +11,7 @@ from AI.engine.schema import(
     ZoneSummary,
     OwnerInput,
     UnitType,
+    UnitMix,
     ContributionResult
 )
 
@@ -187,8 +188,12 @@ def calc_post_asset(params: ProjectParams, areas: Areas, alloc: Allocation) -> R
     #임대 인수수입 (도시정비법 제55조) : 세대당 정액이 아니라 공급면적 × 표준건축비.
     #  표는 전용면적으로 행을 고르고 단가는 공급면적에 곱한다(국토부고시 제2023-64호 주석).
     rental_supply_m2 = alloc.rental_count * params.rental_supply_area_m2
-    rental_revenue = rental_supply_m2 * standard_build_cost_per_m2(
-        params.rental_floor_band, params.rental_exclusive_area_m2
+    #  표준건축비는 2023년 고시값이라 관리처분 시점까지 밀어야 한다 (rental_cost_multiplier).
+    #  밀지 않으면 분양가·공사비만 커져 임대 비중이 저절로 작아지고 종후자산이 과소평가된다
+    rental_revenue = (
+        rental_supply_m2
+        * standard_build_cost_per_m2(params.rental_floor_band, params.rental_exclusive_area_m2)
+        * params.rental_cost_multiplier
     )
     #상가 분양수입 : 주택 분양가 × 배수. 배수 0.7 은 기존 상가 실거래 0.48 에 신축 프리미엄을 얹은 값
     #  서울 10개 구 실거래에서 아파트가 비쌀수록 배수가 낮아진다(마포 0.36 / 노원 0.49) → 비례 가정은
@@ -326,6 +331,136 @@ def unit_options(params: ProjectParams, alloc: Allocation) -> list[UnitOption]:
         options.append(UnitOption(unit.name, unit.supply_area_m2, unit.count, price))
 
     return options
+
+# 전용면적 → 공급면적 (㎡)
+#  세부 설정의 "입력 평형" 은 전용면적이다 (59·84·114 라고 부르는 그 숫자).
+#  엔진은 공급면적으로 계산하므로 전용률로 되돌려야 한다.
+#  전용률은 UNIT_MIX 실측값에서만 가져온다 (재개발 신축 7개 단지 건축물대장 전유공용면적)
+#    전용 59 → 공급 83.4㎡ (70.74%) / 84 → 112.6 (74.60%) / 114 → 153.9 (74.07%)
+#  코어·복도 면적이 거의 고정이라 소형일수록 전용률이 낮다.
+#  측정점 사이는 선형보간하고, 바깥은 가장 가까운 측정점의 전용률을 그대로 쓴다
+#  (측정 범위를 벗어난 평형은 추정이다. 사례가 쌓이면 아래 점들을 갱신할 것)
+EXCLUSIVE_RATIO_POINTS = [
+    (59.0, 59.0 / 83.4),
+    (84.0, 84.0 / 112.6),
+    (114.0, 114.0 / 153.9),
+]
+
+#임대는 전용률이 분양과 다르다. 기본값 실측 한 점(전용 39 / 공급 59)만 있으므로 상수로 둔다
+RENTAL_EXCLUSIVE_RATIO = 39.0 / 59.0
+
+
+def exclusive_ratio(exclusive_m2: float) -> float:
+    points = EXCLUSIVE_RATIO_POINTS
+    if exclusive_m2 <= points[0][0]:
+        return points[0][1]
+    if exclusive_m2 >= points[-1][0]:
+        return points[-1][1]
+
+    for (lo_area, lo_ratio), (hi_area, hi_ratio) in zip(points, points[1:]):
+        if lo_area <= exclusive_m2 <= hi_area:
+            t = (exclusive_m2 - lo_area) / (hi_area - lo_area)
+            return lo_ratio + (hi_ratio - lo_ratio) * t
+
+    return points[-1][1]
+
+
+def supply_area_from_exclusive(exclusive_m2: float) -> float:
+    if exclusive_m2 <= 0:
+        raise ValueError("전용면적은 0보다 커야 합니다")
+    return exclusive_m2 / exclusive_ratio(exclusive_m2)
+
+
+def rental_supply_from_exclusive(exclusive_m2: float) -> float:
+    if exclusive_m2 <= 0:
+        raise ValueError("임대 전용면적은 0보다 커야 합니다")
+    return exclusive_m2 / RENTAL_EXCLUSIVE_RATIO
+
+
+# 세대수 비율 입력 → UnitMix (면적 몫)
+#  사용자는 "59형 30%, 84형 40%, 114형 30%" 처럼 세대수 비율로 적는다.
+#  UnitMix.share 는 세대수 비율이 아니라 분양 공급면적 중 그 평형의 몫이므로 환산한다.
+#    면적몫_i = (세대비율_i × 공급면적_i) ÷ Σ(세대비율_j × 공급면적_j)
+#  이렇게 넣으면 calc_allocation 의
+#    count_i = 분양면적 × 면적몫_i ÷ 공급면적_i = 분양면적 × 세대비율_i ÷ Σ(...)
+#  가 되어 세대수 비가 입력한 비율과 같아진다 (세대수 내림 오차만 남는다).
+MAX_UNIT_TYPES = 4
+
+
+def unit_mix_from_household_ratio(entries: list[tuple[float, float]]) -> list[UnitMix]:
+    if not entries:
+        raise ValueError("평형을 최소 1개 입력해야 합니다")
+    if len(entries) > MAX_UNIT_TYPES:
+        raise ValueError(f"평형은 최대 {MAX_UNIT_TYPES}개까지 입력할 수 있습니다")
+
+    areas = [(float(ex), supply_area_from_exclusive(float(ex))) for ex, _ in entries]
+    ratios = [max(float(r), 0.0) for _, r in entries]
+
+    #입력 비율의 합이 1이 아니어도(부분 입력·반올림) 비로만 쓰므로 정규화한다
+    weights = [r * supply for r, (_, supply) in zip(ratios, areas)]
+    weight_total = sum(weights)
+    if weight_total <= 0:
+        raise ValueError("평형 비율의 합이 0보다 커야 합니다")
+
+    mixes = []
+    for (exclusive, supply), weight in zip(areas, weights):
+        if weight <= 0:
+            continue
+        name = f"{exclusive:g}"
+        mixes.append(
+            UnitMix(
+                name=name,
+                exclusive_area_m2=round(exclusive, 2),
+                supply_area_m2=round(supply, 2),
+                share=weight / weight_total,
+            )
+        )
+
+    if not mixes:
+        raise ValueError("비율이 0보다 큰 평형이 최소 1개 있어야 합니다")
+
+    return mixes
+
+
+# 평형별 분담금 (화면의 "예상 분담금" 패널에 전부 깔아 보여줄 값)
+#  사용자가 평형을 고르게 하지 않고 모든 분양 평형의 분담금을 한 번에 내려준다.
+#  비례율·권리가액은 평형과 무관하므로 한 번만 구하고 분양가만 평형별로 바꾼다.
+#  임대는 조합원 분양 대상이 아니라 목록에서 제외한다.
+@dataclass
+class UnitContribution:
+    name : str                  # 평형 이름 ("84")
+    exclusive_area_m2 : float   # 전용면적
+    supply_area_m2 : float      # 공급면적
+    count : int                 # 배분된 세대수
+    member_price : float        # 조합원분양가(만원)
+    contribution : float        # 분담금(만원). 음수면 환급
+    contribution_ratio : float  # 분담금 ÷ 조합원분양가. 체감용 지표
+
+
+def calc_contribution_all(
+    params: ProjectParams, alloc: Allocation, owner: OwnerInput
+) -> list[UnitContribution]:
+    project = calc_project(params, alloc)
+    right_value = estimate_prior_asset(owner) * project.proportional_rate / 100
+
+    units = []
+    for unit in alloc.unit_types:
+        price = member_price(params, alloc.unit_types, unit.name)
+        contribution = price - right_value
+        units.append(
+            UnitContribution(
+                name=unit.name,
+                exclusive_area_m2=unit.exclusive_area_m2,
+                supply_area_m2=unit.supply_area_m2,
+                count=unit.count,
+                member_price=price,
+                contribution=contribution,
+                contribution_ratio=contribution / price if price else 0.0,
+            )
+        )
+
+    return units
+
 
 # 조합원 개인 분담금
 def calc_contribution(params: ProjectParams, alloc: Allocation, owner: OwnerInput) -> ContributionResult:

@@ -1,0 +1,269 @@
+# 건축물대장 조회 (국토교통부 건축HUB, 공공데이터포털 1613000)
+#
+# 왜 필요한가
+#   종전자산 = 토지분 + 건물분 이고, 건물분은 공시지가에 안 들어 있다.
+#   건물분을 빼면 개인·구역에 같은 배수가 들어가 분담금에서 약분된다 (수치로 확인했다).
+#   여기서 받아오는 값이 그 약분을 깨는 유일한 실체다.
+#
+# 두 엔드포인트를 쓴다
+#   getBrTitleInfo          표제부   — 연면적·구조·사용승인일·세대수 (동별)
+#   getBrExposPubuseAreaInfo 전유공용 — 호별 전유면적. 집합건물에서 내 몫을 나누는 데 쓴다
+#
+# PNU(19자리) → 건축물대장 파라미터
+#   PNU = 법정동코드(10) + 필지구분(1) + 본번(4) + 부번(4)
+#         법정동코드(10) = 시군구(5) + 법정동(5)
+#         필지구분 1=일반(대지) → platGbCd 0,  2=산 → platGbCd 1
+import logging
+import os
+import time
+from dataclasses import dataclass, field
+from datetime import date
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+logger = logging.getLogger(__name__)
+
+TITLE_URL = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
+EXPOS_URL = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrExposPubuseAreaInfo"
+
+#한 필지에 동·호가 많을 수 있다. 단독주택은 1~3건, 대단지 아파트는 한 필지에 8개 동도 있다
+#  ※ pageNo 를 보내지 않으면 이 API 는 numOfRows 를 무시하고 1건만 돌려준다 (실측).
+#    그래서 _rows 가 pageNo 를 항상 붙인다 — 빠뜨리면 아파트 연면적이 한 동치만 잡힌다
+#  ※ numOfRows 상한은 100 이다. 더 크게 요청해도 서버가 100 으로 깎는다 (실측).
+#    1000 을 보내고 1000행 받았다고 믿으면 전유면적 합계가 1/10 로 잡힌다
+API_MAX_ROWS = 100
+
+#표제부는 한 필지의 동 수만큼이라 몇 페이지면 충분하다 (대단지 8개 동)
+MAX_TITLE_PAGES = 5
+
+#전유공용은 호 × 면적구분마다 한 행이라 금방 수천 행이 된다 (월계동 12번지 = 3,670행 = 37페이지).
+#  상한을 넘으면 합계가 과소집계되므로 0 을 돌려주고 세대수 균등분할로 떨어진다 — 조용히 틀리지 않게
+MAX_EXPOS_PAGES = 50
+
+#건축HUB 는 동시 호출에 민감하다. 병렬로 던지면 HTTPError 가 쏟아진다 (실측)
+CALL_GAP = 0.12
+
+SESSION = requests.Session()
+SESSION.mount(
+    "https://",
+    HTTPAdapter(
+        max_retries=Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=("GET",),
+        )
+    ),
+)
+
+#주용도로 주거 여부를 걸러내지 않는다.
+#  처음에는 주거용 주용도만 세대수를 셌는데, 월계동 실측에서 356명이 누락됐다.
+#  상가주택(1층 근생 + 2~3층 주택)은 주용도가 '근린생활시설' 로 등록되지만 세대가 여럿이고,
+#  월계동 321-2번지는 주용도 근생인데 106세대·연면적 18,130㎡(주상복합)다.
+#  건축물대장의 세대·가구 수는 주용도와 무관하게 실제 주거 단위를 뜻하므로 그대로 신뢰한다.
+#  비주거 건물은 애초에 hhldCnt·fmlyCnt 가 0 이라 1 로 떨어진다.
+#  (재개발 대상지 487필지 기준 2,595 → 2,780명, +7.1%. 조합원 수는 사업이익의 분모라 영향이 크다)
+
+
+@dataclass
+class BuildingLedger:
+    pnu: str
+    floor_area_m2: float = 0.0        # 연면적 합계(㎡). 건물분 계산의 바탕
+    structure: str = ""               # 대표 구조 (연면적이 가장 큰 동)
+    approval_ymd: str = ""            # 사용승인일 YYYYMMDD
+    elapsed_years: float = 0.0        # 경과연수 = 평가시점 − 사용승인일
+    household_count: int = 1          # 세대·가구 수. 조합원 수 실측에 쓴다
+    is_condo: bool = False            # 집합건물 여부 (한 필지에 조합원이 여럿)
+    main_purpose: str = ""            # 주용도
+    has_building: bool = False        # False 면 나대지 → 건물분 0
+    fallback: bool = False            # 조회 실패. 건물분을 못 구한 상태
+    warnings: list[str] = field(default_factory=list)
+
+
+def _service_key() -> str | None:
+    #.env 는 사용자 영역이라 코드가 쓰지 않는다. 없으면 건물분 없이(나대지로) 계산된다
+    return os.getenv("BLDRGST_API_KEY") or os.getenv("BUILDING_LEDGER_API_KEY")
+
+
+#PNU → (시군구, 법정동, 필지구분, 본번, 부번)
+def parse_pnu(pnu: str) -> tuple[str, str, str, str, str] | None:
+    pnu = (pnu or "").strip()
+    if len(pnu) != 19 or not pnu.isdigit():
+        return None
+    return (
+        pnu[0:5],                       # sigunguCd
+        pnu[5:10],                      # bjdongCd
+        "1" if pnu[10] == "2" else "0",  # platGbCd : 산이면 1
+        pnu[11:15],                     # bun
+        pnu[15:19],                     # ji
+    )
+
+
+def _page(url: str, params: dict, page_no: int, rows_per_page: int) -> tuple[list[dict], int]:
+    #pageNo 는 반드시 보낸다. 없으면 numOfRows 가 무시되고 1건만 온다
+    response = SESSION.get(
+        url, params={**params, "numOfRows": rows_per_page, "pageNo": page_no}, timeout=15
+    )
+    response.raise_for_status()
+    body = response.json().get("response", {}).get("body", {})
+
+    try:
+        total = int(body.get("totalCount") or 0)
+    except (TypeError, ValueError):
+        total = 0
+
+    items = body.get("items") or {}
+
+    #건수가 0 이면 items 가 빈 문자열로 오기도 한다
+    if not isinstance(items, dict):
+        return [], total
+
+    rows = items.get("item")
+    if rows is None:
+        return [], total
+    return (rows if isinstance(rows, list) else [rows]), total
+
+
+#전체 페이지를 모아서 돌려준다. totalCount 를 보고 필요한 만큼만 더 부른다
+def _rows(url: str, params: dict, max_pages: int) -> tuple[list[dict], int]:
+    collected, total = _page(url, params, 1, API_MAX_ROWS)
+    if not collected:
+        return [], total
+
+    pages = min(-(-total // API_MAX_ROWS), max_pages)
+    for page_no in range(2, pages + 1):
+        time.sleep(CALL_GAP)
+        more, _ = _page(url, params, page_no, API_MAX_ROWS)
+        if not more:
+            break
+        collected += more
+
+    return collected, total
+
+
+def _f(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _i(value, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+#사용승인일 → 경과연수. 기준시점을 넘기면 그 시점으로 센다
+def elapsed_years(approval_ymd: str, as_of: date | None = None) -> float:
+    if not approval_ymd or len(approval_ymd) < 4:
+        return 0.0
+    as_of = as_of or date.today()
+    try:
+        year = int(approval_ymd[0:4])
+        month = int(approval_ymd[4:6]) if len(approval_ymd) >= 6 else 1
+    except ValueError:
+        return 0.0
+    years = (as_of.year - year) + (as_of.month - max(month, 1)) / 12.0
+    return max(years, 0.0)
+
+
+#필지 1건의 건축물대장 요약
+#  실패해도 예외를 올리지 않는다 — 건물분을 0 으로 두면 나대지가 되어 기존 동작과 같다.
+#  조용히 틀리는 쪽이 아니라 "못 구했다"(fallback=True)를 남기는 쪽을 택한다
+def fetch_building(pnu: str, as_of: date | None = None) -> BuildingLedger:
+    result = BuildingLedger(pnu=pnu)
+    parts = parse_pnu(pnu)
+    if parts is None:
+        result.fallback = True
+        result.warnings.append(f"PNU 형식이 아닙니다: {pnu}")
+        return result
+
+    key = _service_key()
+    if not key:
+        result.fallback = True
+        result.warnings.append("건축물대장 API 키(BLDRGST_API_KEY)가 없어 건물분을 계산하지 못했습니다.")
+        return result
+
+    sigungu, bjdong, plat_gb, bun, ji = parts
+    base = {
+        "serviceKey": key, "sigunguCd": sigungu, "bjdongCd": bjdong,
+        "platGbCd": plat_gb, "bun": bun, "ji": ji, "_type": "json",
+    }
+
+    try:
+        titles, _ = _rows(TITLE_URL, base, MAX_TITLE_PAGES)
+    except Exception as err:
+        logger.warning(f"[ Log ] : 건축물대장 표제부 조회 실패 {pnu} : {err}")
+        result.fallback = True
+        result.warnings.append("건축물대장을 조회하지 못해 건물분을 0 으로 두었습니다.")
+        return result
+
+    #표제부가 없으면 나대지다. 오류가 아니라 정상적인 결과다
+    if not titles:
+        return result
+
+    result.has_building = True
+    result.floor_area_m2 = sum(_f(row.get("totArea")) for row in titles)
+
+    #대표 구조·사용승인일은 연면적이 가장 큰 동에서 가져온다 (여러 동이면 그 동이 지배적이다)
+    main = max(titles, key=lambda row: _f(row.get("totArea")))
+    result.structure = (main.get("strctCdNm") or "").strip()
+    result.main_purpose = (main.get("mainPurpsCdNm") or "").strip()
+    result.approval_ymd = (main.get("useAprDay") or "").strip()
+    result.elapsed_years = elapsed_years(result.approval_ymd, as_of)
+
+    #집합건물 여부. 대장종류가 '집합' 이거나 세대수가 2 이상이면 조합원이 여럿이다
+    kinds = " ".join((row.get("regstrKindCdNm") or "") for row in titles)
+    hhld = sum(_i(row.get("hhldCnt")) for row in titles)
+    fmly = sum(_i(row.get("fmlyCnt")) for row in titles)
+
+    #단독주택은 hhldCnt=0, fmlyCnt=1 로 온다 (실측).
+    #  다가구는 fmlyCnt 가 세대수(월계동 단독주택 471건 중 140건이 fmlyCnt>1, 최대 16),
+    #  공동주택은 hhldCnt 가 세대수(최대 275)다. 둘 중 큰 값을 쓴다
+    result.household_count = max(hhld, fmly, 1)
+    result.is_condo = "집합" in kinds or result.household_count > 1
+
+    #전유면적 합계는 여기서 받지 않는다.
+    #  호·면적구분마다 한 행이라 대단지는 수천 행이고(월계동 12번지 = 3,670행),
+    #  구역 전 필지에 대해 받으면 /zone 이 몇 분씩 걸린다.
+    #  실제로 쓰이는 건 "내 필지" 하나뿐이고, 그것도 사용자가 전유면적을 입력했을 때만이다.
+    #  → fetch_exclusive_total() 로 떼어내 /contribution 이 필요할 때만 부른다
+    return result
+
+
+#집합건물 전유면적 합계(㎡). 집합건물에서 내 몫을 나누는 분모다
+#   내 몫 = 내 전유면적 ÷ 이 합계
+#  연면적(totArea)으로 나누면 공용면적까지 분모에 들어가 내 몫이 과소평가된다.
+#  '전유' 이면서 '주건축물' 인 행만 센다 — 부속건축물(창고·주차장)은 지분 분모가 아니다
+def fetch_exclusive_total(pnu: str) -> float:
+    parts = parse_pnu(pnu)
+    key = _service_key()
+    if parts is None or not key:
+        return 0.0
+
+    sigungu, bjdong, plat_gb, bun, ji = parts
+    base = {
+        "serviceKey": key, "sigunguCd": sigungu, "bjdongCd": bjdong,
+        "platGbCd": plat_gb, "bun": bun, "ji": ji, "_type": "json",
+    }
+
+    try:
+        rows, total = _rows(EXPOS_URL, base, MAX_EXPOS_PAGES)
+    except Exception as err:
+        logger.warning(f"[ Log ] : 건축물대장 전유공용 조회 실패 {pnu} : {err}")
+        return 0.0
+
+    #다 못 받았으면 합계가 과소집계된다. 틀린 값을 주는 대신 0 (= 세대수 균등분할)
+    if total > len(rows):
+        logger.warning(f"[ Log ] : 전유공용 {total}행 중 {len(rows)}행만 수신 {pnu} — 합계 포기")
+        return 0.0
+
+    return sum(
+        _f(row.get("area")) for row in rows
+        if "전유" in (row.get("exposPubuseGbCdNm") or "")
+        and "부속" not in (row.get("mainAtchGbCdNm") or "")
+    )

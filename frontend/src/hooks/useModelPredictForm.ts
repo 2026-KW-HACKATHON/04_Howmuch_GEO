@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SlidersState } from '../hooks/useSlider';
-import { ContributionResult, MemberCountRange, ZoneInfo } from './useContribution';
+import {
+    ContributionResult, MemberCountRange, MAX_UNIT_TYPES, UnitMixEntry,
+    ZoneInfo, ZonePriorAsset,
+} from './useContribution';
 
 //슬라이더를 움직인 뒤 다시 계산하기까지 기다리는 시간
 const RECALC_DEBOUNCE_MS = 250;
@@ -50,8 +53,38 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         desired_unit: "84",
     });
 
+    //평형 구성 (세부 설정).
+    //  null 이면 서버가 실측 기본값(UNIT_MIX : 59·84·114)을 쓴다.
+    //  사용자가 한 번이라도 손대면 그 값을 보내기 시작한다 — 기본 상태에서 세대수 비율로
+    //  환산한 값을 되돌려 보내면 반올림 때문에 기본 결과와 미세하게 달라져서다
+    const [unitMix, setUnitMix] = useState<UnitMixEntry[] | null>(null);
+
+    //임대 1세대 전용면적(㎡). null 이면 서버 기본값(39㎡)
+    //  임대 비율은 입력받지 않는다 — 용적률 완화분에서 법정으로 정해진다 (도시정비법 제54조)
+    const [rentalExclusive, setRentalExclusive] = useState<number | null>(null);
+
+    //내 필지 지정. 비우면 구역 종전자산의 1인분(ρ=1)으로 계산된다 — 구역 평균 조합원
+    const [ownerPnu, setOwnerPnu] = useState<string>('');
+
+    //집합건물에서 내 전유면적(㎡). 없으면 세대수로 균등 분할한다
+    const [ownerExclusive, setOwnerExclusive] = useState<number | null>(null);
+
+    //구역 종전자산 집계 (/zone 의 prior_asset). 필지 원자료를 /contribution 에 돌려보낸다
+    const [priorAsset, setPriorAsset] = useState<ZonePriorAsset | null>(null);
+
+    //평형·비율·임대 평형은 입력 중간 상태가 그대로 계산에 들어가면 안 되므로
+    //  「적용」을 눌러야 반영한다 (슬라이더는 실시간, 크레딧은 어느 쪽도 추가로 안 든다).
+    //  applied* 가 실제 계산에 쓰이는 값이고, unitMix/rentalExclusive 는 입력 중인 값이다
+    const [appliedUnitMix, setAppliedUnitMix] = useState<UnitMixEntry[] | null>(null);
+    const [appliedRentalExclusive, setAppliedRentalExclusive] = useState<number | null>(null);
+
     //구역 분석 완료 여부
     const [zoneCalculated, setZoneCalculated] = useState<boolean>(false);
+
+    //용도지역이 바뀌었는데 아직 다시 분석하지 않은 상태.
+    //  이 동안 화면의 결과는 이전 용도지역 기준이라 그대로 믿으면 안 된다.
+    //  /zone 재호출은 크레딧 1개를 더 쓰므로 자동으로 부르지 않고 버튼을 기다린다
+    const [zoningStale, setZoningStale] = useState<boolean>(false);
 
     //슬라이더 변수 상태
     const [sliderData, setSliderData] = useState<SlidersState>({
@@ -103,6 +136,11 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
     //  용도지역이 바뀌면 용적률 범위가 달라지므로 구역을 다시 분석해야 한다.
     //  값만 담아두고, 실제 계산은 사용자가 계산 버튼을 눌렀을 때 일어난다
     const handleSelectZoning = (zoning: string) => {
+        //이미 결과가 있는 상태에서 용도지역을 바꾸면, 화면의 숫자는 이전 용도지역 기준이다.
+        //  결과를 지우지 않고 "낡음" 으로 표시한다 — 지워버리면 비교할 대상이 사라진다
+        if (calcResult) {
+            setZoningStale(true);
+        }
         setSelectedZoning(zoning);
         setZoneCalculated(false);
     };
@@ -122,6 +160,38 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
     //희망 평형 선택 Handler (패널의 평형 버튼)
     const handleSelectUnit = (name: string) => {
         setOwnerData((prev) => ({ ...prev, desired_unit: name }));
+    };
+
+    //평형 구성 Handler (세부 설정) — 입력만 받는다. 계산은 「적용」을 눌러야 한다
+    //  빈 칸을 지우는 중간 상태를 허용해야 한다 (30 → 3 → 35 로 고치는 중에 3 으로 계산되면 안 된다)
+    const handleUnitMixChange = (rows: UnitMixEntry[]) => {
+        setUnitMix(rows.slice(0, MAX_UNIT_TYPES));
+    };
+
+    //임대 평형 Handler. 0·빈 칸이면 서버 기본값으로 되돌린다
+    const handleRentalExclusiveChange = (value: number | null) => {
+        setRentalExclusive(value && value > 0 ? value : null);
+    };
+
+    //평형 구성 「적용」 — 여기서만 계산에 반영된다
+    const handleApplyUnitMix = () => {
+        setAppliedUnitMix(unitMix);
+        setAppliedRentalExclusive(rentalExclusive);
+    };
+
+    //입력값이 적용값과 다른가 (「적용」 버튼을 활성화할지 판단)
+    const unitMixDirty =
+        JSON.stringify(unitMix) !== JSON.stringify(appliedUnitMix)
+        || rentalExclusive !== appliedRentalExclusive;
+
+    //내 필지 지정 Handler. 필지를 바꾸면 전유면적 입력은 의미가 없어져 비운다
+    const handleSelectOwnerPnu = (pnu: string) => {
+        setOwnerPnu(pnu);
+        setOwnerExclusive(null);
+    };
+
+    const handleOwnerExclusiveChange = (value: number | null) => {
+        setOwnerExclusive(value && value > 0 ? value : null);
     };
 
     //Zone 호출 Handler
@@ -150,6 +220,11 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
                         member_count: data.sliders.member_count ?? MEMBER_COUNT_FALLBACK,
                     });
                 }
+                //구역 종전자산 집계. parcels 를 /contribution 에 돌려보내 평가시점으로 재집계한다
+                if (data.prior_asset) {
+                    setPriorAsset(data.prior_asset);
+                }
+                setZoningStale(false);
                 setZoneCalculated(true);
             } else {
                 setInitialCalculationPending(false);
@@ -168,10 +243,14 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
     useEffect(() => {
         setZoneCalculated(false);
         setCreditToken(null);
+        setZoningStale(false);
         if (selectedPnus.length === 0) {
             setZoneInfo(null);
             setCalcResult(null);
             setMemberRange(null);
+            setPriorAsset(null);
+            setOwnerPnu('');
+            setOwnerExclusive(null);
             setError(null);
         }
     }, [selectedPnus]);
@@ -201,8 +280,24 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
                 sliders: engineSliders,
                 far_base: zoneInfo.far_min,
                 land_value_total: zoneInfo.land_value_total,
+                //「적용」을 누른 값만 보낸다. 손대지 않았으면 아예 안 보내고 서버 실측 기본값을 쓴다
+                //  비율이 0 인 줄과 면적이 비어 있는 줄은 입력 중인 상태라 빼고 보낸다
+                ...(appliedUnitMix
+                    ? {
+                        unit_mix: appliedUnitMix.filter(
+                            (row) => row.exclusive_area_m2 > 0 && row.household_ratio > 0
+                        ),
+                    }
+                    : {}),
+                ...(appliedRentalExclusive ? { rental_exclusive_area_m2: appliedRentalExclusive } : {}),
+                //필지 원자료를 그대로 돌려보낸다 → 서버가 평가시점(사업시행인가) 기준으로
+                //  종전자산을 토지분+건물분 재집계한다. 이게 없으면 건물분이 빠져 약분된다
+                ...(priorAsset?.parcels?.length ? { parcel_valuations: priorAsset.parcels } : {}),
                 owner: {
                     desired_unit: ownerData.desired_unit,
+                    //내 필지를 지정하면 그 필지 기준으로 개인화된다. 비우면 구역 1인분(ρ=1)
+                    ...(ownerPnu ? { pnu: ownerPnu } : {}),
+                    ...(ownerExclusive ? { exclusive_area_m2: ownerExclusive } : {}),
                 }
             };
             
@@ -247,6 +342,11 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         sliderData.rental_floor_band?.value,
         sliderData.project_period_years?.value,
         ownerData.desired_unit,
+        appliedUnitMix,
+        appliedRentalExclusive,
+        priorAsset,
+        ownerPnu,
+        ownerExclusive,
         formData.name,
         formData.member_count,
     ]);
@@ -304,6 +404,18 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         handleSelectZoning,
         handleSliderChange,
         handleSelectUnit,
+        unitMix,
+        handleUnitMixChange,
+        rentalExclusive,
+        handleRentalExclusiveChange,
+        handleApplyUnitMix,
+        unitMixDirty,
+        priorAsset,
+        ownerPnu,
+        handleSelectOwnerPnu,
+        ownerExclusive,
+        handleOwnerExclusiveChange,
+        zoningStale,
         handleZoneData,
         handleSubmit,
         zoneCalculated,

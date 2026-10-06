@@ -8,6 +8,74 @@ export interface UnitOption {
     member_price: number;
 }
 
+//평형별 분담금 (백엔드 unit_contributions)
+//  평형을 고르게 하지 않고 분양 평형 전부를 한 번에 깔아 보여준다.
+//  비례율·권리가액은 평형과 무관해서 분양가만 평형별로 다르다
+export interface UnitContribution {
+    name: string;
+    exclusive_area_m2: number;
+    supply_area_m2: number;
+    count: number;
+    member_price: number;
+    contribution: number;        //만원. 음수면 환급
+    contribution_ratio: number;  //분담금 ÷ 조합원분양가
+}
+
+//세부 설정의 평형 한 줄 (전용면적 + 세대수 비율)
+//  비율은 세대수 기준이다. 백엔드가 면적 몫으로 환산한다
+export interface UnitMixEntry {
+    exclusive_area_m2: number;
+    household_ratio: number;     //% 로 보낸다 (30 = 30%). 합이 100 이 아니어도 서버가 정규화한다
+}
+
+//평형은 최대 4개까지. 그 이상은 화면에 깔 자리가 없고 일반인에게 의미도 없다
+export const MAX_UNIT_TYPES = 4;
+
+//필지별 종전자산 원자료 (/zone 의 prior_asset.parcels)
+//  /contribution 에 그대로 돌려보낸다. 평가 기준시점(사업시행인가)이 사업기간 슬라이더에
+//  따라 달라지고, 그 시점에는 건물이 더 낡고(잔존율 ↓) 재조달원가는 오르는데(공사비 ↑)
+//  상쇄 정도가 구조마다 달라 필지 단위로 다시 계산해야 한다. API 추가 호출은 없다
+export interface ParcelValuation {
+    pnu: string;
+    land_area_m2: number;
+    land_price_per_m2: number;
+    structure: string;
+    building_area_m2: number;
+    elapsed_years: number;
+    household_count: number;
+    has_building: boolean;
+    land_category: string;
+}
+
+//구역 종전자산 집계 (/zone 의 prior_asset)
+export interface ZonePriorAsset {
+    land_total: number;
+    building_total: number;
+    total: number;
+    official_total: number;
+    ratio: number;              //r_구역 = 종전자산 ÷ 공시지가
+    member_count: number;       //건축물대장 실측 조합원 수
+    parcel_count: number;
+    building_parcel_count: number;
+    replacement_cost_per_m2: number;
+    parcels: ParcelValuation[];
+}
+
+//종전자산 분해 (/contribution 의 prior_asset_detail)
+//  rho 가 1 이 아니면 건물분으로 약분이 깨져 개인화된 상태다
+export interface PriorAssetDetail {
+    zone_land_total: number | null;
+    zone_building_total: number | null;
+    zone_total: number;
+    zone_ratio: number | null;
+    measured_member_count: number | null;
+    building_parcel_count: number | null;
+    owner_personalized: boolean;
+    rho: number | null;
+    owner_share: number | null;              //집합건물에서 적용된 내 몫
+    owner_exclusive_total_m2: number | null; //전유면적 합계. 0 이면 세대수 균등분할을 썼다
+}
+
 //조합원 수 슬라이더 범위. 용적률에 따라 상한이 바뀐다 (분양 세대수를 넘을 수 없음)
 export interface MemberCountRange {
     value: number;
@@ -34,6 +102,9 @@ export interface ContributionResult {
         warnings: string[];
     };
     unit_options: UnitOption[];
+    unit_contributions?: UnitContribution[];
+    prior_asset_detail?: PriorAssetDetail;
+    rental_exclusive_area_m2?: number;   //계산에 쓴 임대 전용면적. 세부 설정 입력란의 기본 표시값
     member_count_range?: MemberCountRange;
     warnings: string[];
     credits_remaining: number;
@@ -117,6 +188,14 @@ export function buildMetrics(
             sliderKey: 'member_count',
         },
         { label: '조합원 수', value: `${members.toLocaleString()}명`, sliderKey: 'member_count' },
-        { label: '종전자산(내)', value: toEok(result?.prior_asset ?? 0) },
+        //내 필지를 지정하면 ρ(= r_개인 ÷ r_구역)가 1 에서 벗어난다.
+        //  1 보다 크면 내 건물이 구역 평균보다 새것이라 권리가액을 더 받는다는 뜻이다.
+        //  지정 전에는 구역 1인분이라 정확히 1.0 이고, 그때는 배수를 적지 않는다
+        {
+            label: result?.prior_asset_detail?.owner_personalized ? '종전자산(내 필지)' : '종전자산(1인분)',
+            value: result?.prior_asset_detail?.rho
+                ? `${toEok(result?.prior_asset ?? 0)} · ×${result.prior_asset_detail.rho.toFixed(2)}`
+                : toEok(result?.prior_asset ?? 0),
+        },
     ];
 }

@@ -17,6 +17,7 @@ def build_sliders(
     household_count: int | None = None,
     project_type: str = "재개발",
     sale: SalePrediction | None = None,
+    measured_member_count: int | None = None,
 ) -> dict:
     #용도지역별 상가 비율 상한. 구역 대표 용도지역을 모르면 2·3종 일반주거 기준을 쓴다
     commercial_max = COMMERCIAL_RATIO_MAX.get(zone.zoning or "", DEFAULT_COMMERCIAL_RATIO_MAX)
@@ -87,6 +88,26 @@ def build_sliders(
             "value": household_count,
             "min": int(household_count * MEMBER_COUNT_MIN_RATIO),
             "max": int(household_count * max_ratio),
+        }
+
+    #건축물대장으로 실측한 조합원 수가 있으면 그것을 기본값으로 쓴다.
+    #  조합원 수 = Σ(집합건물 세대수) + Σ(단독주택·나대지 필지 수) — 전수 집계라 추정이 아니다.
+    #  슬라이더 하나가 L2(추정 범위) → L1(실측) 으로 내려간다.
+    #  조합원 수는 사업이익을 나누는 분모라 분담금에 직접 영향이 크다.
+    #  범위는 남겨둔다 — 무허가건축물·나대지 지분 소유자처럼 대장에 안 잡히는 조합원이 있다
+    if measured_member_count:
+        existing = sliders.get("member_count")
+        low = int(measured_member_count * MEMBER_COUNT_MIN_RATIO)
+        high = int(measured_member_count * MEMBER_COUNT_MAX_RATIO.get(project_type, 1.25))
+        if existing:
+            #세대수 기준 범위와 실측값을 모두 담을 수 있게 넓힌다
+            low = min(low, existing["min"])
+            high = max(high, existing["max"])
+        sliders["member_count"] = {
+            "value": measured_member_count,
+            "min": max(1, low),
+            "max": max(high, measured_member_count),
+            "measured": True,
         }
 
     return sliders

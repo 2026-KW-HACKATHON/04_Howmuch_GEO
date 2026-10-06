@@ -24,7 +24,6 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
 }) => {
     const {
         formData,
-        ownerData,
         sliderData,
         zoneInfo,
         targetYm,
@@ -35,7 +34,18 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
         zoningOptions,
         handleSelectZoning,
         handleSliderChange,
-        handleSelectUnit,
+        unitMix,
+        handleUnitMixChange,
+        rentalExclusive,
+        handleRentalExclusiveChange,
+        handleApplyUnitMix,
+        unitMixDirty,
+        priorAsset,
+        ownerPnu,
+        handleSelectOwnerPnu,
+        ownerExclusive,
+        handleOwnerExclusiveChange,
+        zoningStale,
         handleZoneData,
     } = useModelPredictForm({ onHandleZoneData, onCalculateContribution, selectedPnus });
 
@@ -124,8 +134,18 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
                     metrics={metrics}
                     sliders={sliderData}
                     onSliderChange={handleSliderChange}
-                    selectedUnit={ownerData.desired_unit}
-                    onSelectUnit={handleSelectUnit}
+                    unitMix={unitMix}
+                    onUnitMixChange={handleUnitMixChange}
+                    rentalExclusive={rentalExclusive}
+                    onRentalExclusiveChange={handleRentalExclusiveChange}
+                    onApplyUnitMix={handleApplyUnitMix}
+                    unitMixDirty={unitMixDirty}
+                    priorAsset={priorAsset}
+                    ownerPnu={ownerPnu}
+                    onSelectOwnerPnu={handleSelectOwnerPnu}
+                    ownerExclusive={ownerExclusive}
+                    onOwnerExclusiveChange={handleOwnerExclusiveChange}
+                    zoningStale={zoningStale}
                     targetYm={targetYm}
                     loading={loading}
                 />

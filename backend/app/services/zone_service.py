@@ -137,3 +137,74 @@ async def set_cached_land(pnu: str, data: dict):
     #Redis 저장 중 오류 발생 시 경고 로깅
     except Exception as err:
         logger.warning(f"[ Log ] : Redis 캐시 저장 실패 : Redis 쓰기 오류 : Land : {cache_key} : {err}")
+
+#Redis 를 통한 건축물대장 캐시 불러오기
+#  land:{pnu} 에 합치지 않고 따로 둔다 — 이미 7일 TTL 로 캐시된 기존 항목을 깨지 않고,
+#  건축물대장은 거의 변하지 않아 더 긴 TTL 을 줄 수 있다
+async def get_cached_building(pnu: str) -> Optional[dict]:
+    cache_key = f"bld:{pnu}"
+
+    try:
+        val = await redis_client.get(cache_key)
+        if val:
+            logger.warning(f"[ Log ] : Redis 캐시 불러오기 성공 : Building : {cache_key}")
+            return json.loads(val)
+        logger.warning(f"[ Log ] : Redis 캐시 존재하지 않음 : Building : {cache_key}")
+
+    except Exception as err:
+        logger.warning(f"[ Log ] : Redis 캐시 불러오기 실패 : Building : {cache_key} : {err}")
+
+    return None
+
+
+#Redis 를 통한 건축물대장 캐시 저장하기
+#  TTL 30일. 사용승인일·구조·연면적은 바뀌지 않고, 신축·멸실만 반영이 늦어진다.
+#  재개발 구역은 신축이 거의 없어 이 지연이 문제되지 않는다
+async def set_cached_building(pnu: str, data: dict) -> None:
+    if not data:
+        return
+
+    cache_key = f"bld:{pnu}"
+
+    try:
+        serialized_data = json.dumps(data, ensure_ascii=False, default=str)
+        await redis_client.setex(cache_key, 2592000, serialized_data)
+        logger.warning(f"[ Log ] : Redis 캐시 저장 성공 : Building : {cache_key} : (TTL 2592000s)")
+
+    except Exception as err:
+        logger.warning(f"[ Log ] : Redis 캐시 저장 실패 : Building : {cache_key} : {err}")
+
+
+
+#Redis 를 통한 전유면적 합계 캐시
+#  전유공용 조회는 호·면적구분마다 한 행이라 대단지는 37페이지(9.7초 실측)가 걸린다.
+#  값 자체는 거의 변하지 않아 길게 캐시한다 (TTL 30일)
+async def get_cached_exclusive_total(pnu: str) -> Optional[float]:
+    cache_key = f"exc:{pnu}"
+
+    try:
+        val = await redis_client.get(cache_key)
+        if val is not None:
+            logger.warning(f"[ Log ] : Redis 캐시 불러오기 성공 : Exclusive : {cache_key}")
+            return float(val)
+        logger.warning(f"[ Log ] : Redis 캐시 존재하지 않음 : Exclusive : {cache_key}")
+
+    except Exception as err:
+        logger.warning(f"[ Log ] : Redis 캐시 불러오기 실패 : Exclusive : {cache_key} : {err}")
+
+    return None
+
+
+async def set_cached_exclusive_total(pnu: str, total: float) -> None:
+    #0 은 "다 못 받았다" 는 뜻이라 캐시하지 않는다. 일시 장애가 굳어버린다
+    if not total:
+        return
+
+    cache_key = f"exc:{pnu}"
+
+    try:
+        await redis_client.setex(cache_key, 2592000, str(total))
+        logger.warning(f"[ Log ] : Redis 캐시 저장 성공 : Exclusive : {cache_key} : (TTL 2592000s)")
+
+    except Exception as err:
+        logger.warning(f"[ Log ] : Redis 캐시 저장 실패 : Exclusive : {cache_key} : {err}")
