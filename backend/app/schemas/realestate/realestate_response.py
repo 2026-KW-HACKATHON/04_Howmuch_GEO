@@ -61,6 +61,10 @@ class ZoneResponse(BaseModel):
     selected_zoning: Optional[str] = Field(None, description="사용자가 선택한 용도지역")
     sliders: Dict[str, Any] = Field(..., description="슬라이더 설정 객체")
     cost_prediction: Dict[str, Any] = Field(..., description="공사비 예측 데이터")
+    prior_asset: Optional[Dict[str, Any]] = Field(
+        None,
+        description="구역 종전자산(토지분+건물분)과 실측 조합원 수. 건축물대장 전수 집계 결과",
+    )
     sale_prediction: Dict[str, Any] = Field(..., description="분양가 예측 데이터")
     credits_remaining: int = Field(..., description="남은 일일 크레딧")
     credit_token: str = Field(..., description="성공한 분담금 계산에서 크레딧을 차감하기 위한 토큰")
@@ -93,6 +97,19 @@ class UnitOption(BaseModel):
     count: int = Field(..., description="배분 세대수")
     member_price: float = Field(..., description="조합원 분양가")
 
+#평형별 분담금 스키마 ("예상 분담금" 패널에 전부 깔아 보여주는 값)
+#  사용자가 평형을 고르지 않아도 분양 평형 전부의 분담금이 한 번에 내려온다.
+#  임대는 조합원 분양 대상이 아니라 목록에 없다
+class UnitContributionModel(BaseModel):
+    name: str = Field(..., description="평형 이름 (전용면적 숫자)")
+    exclusive_area_m2: float = Field(..., description="전용면적 (㎡)")
+    supply_area_m2: float = Field(..., description="공급면적 (㎡)")
+    count: int = Field(..., description="배분 세대수")
+    member_price: float = Field(..., description="조합원 분양가 (만원)")
+    contribution: float = Field(..., description="분담금 (만원). 음수면 환급")
+    contribution_ratio: float = Field(..., description="분담금 ÷ 조합원 분양가")
+
+
 #Member Count 스키마
 class MemberCountRange(BaseModel):
     value: int = Field(..., description="현재 설정된 조합원 수")
@@ -109,6 +126,17 @@ class ContributionResponse(BaseModel):
     contribution: float = Field(..., description="추정 분담금 (음수면 환급)")
     project: ContributionProject = Field(..., description="사업 전체 계산 결과")
     unit_options: List[UnitOption] = Field(..., description="평형별 조합원 분양가 선택지")
+    unit_contributions: List[UnitContributionModel] = Field(
+        default_factory=list, description="분양 평형별 분담금. 화면의 예상 분담금 패널에 그대로 깐다"
+    )
+    prior_asset_detail: Optional[Dict[str, Any]] = Field(
+        None,
+        description="종전자산 분해(구역 토지분·건물분, r_구역, 실측 조합원 수, ρ). "
+                    "ρ 가 1 이 아니면 건물분으로 약분이 깨져 개인화된 상태",
+    )
+    rental_exclusive_area_m2: float = Field(
+        0.0, description="계산에 쓴 임대 1세대 전용면적(㎡). 세부 설정 입력란에 되돌려 보여준다"
+    )
     member_count_range: MemberCountRange = Field(..., description="조합원 수 슬라이더 가동 범위")
     warnings: List[str] = Field(default_factory=list, description="사업성 계산 경고 메시지")
     credits_remaining: int = Field(..., description="남은 일일 크레딧")

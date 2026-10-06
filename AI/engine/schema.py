@@ -45,6 +45,11 @@ class ProjectParams:
     #  층수 구간만 사용자가 고르고(노드 슬라이더), 전용면적 구간은 아래 값에서 자동으로 정해진다
     rental_floor_band : str = DEFAULT_FLOOR_BAND      # 임대동 층수 구간 (L2, 노드 슬라이더)
     rental_exclusive_area_m2 : float = 39.0           # 임대 1세대 주거전용면적. 표의 행을 고르는 데 쓴다 (L1)
+    #임대 인수수입 시점 보정 배수.
+    #  표준건축비는 2023년 고시값이라 사업기간 뒤 관리처분 시점까지 밀어야 한다.
+    #  분양가·공사비는 밀리는데 임대만 2023년에 멈춰 있으면 종후자산이 과소평가된다.
+    #  정책가격이라 공사비지수(연 3.97%)대로 오르지 않는다 — 실측 인상률을 쓴다 (L3)
+    rental_cost_multiplier : float = 1.0
 
     # 비용
     construction_cost_per_pyeong : float    # 평당 공사비(만원) (L2/L3)

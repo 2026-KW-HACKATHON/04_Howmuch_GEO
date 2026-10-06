@@ -1,12 +1,19 @@
 from app.config.engine_defaults import ENGINE_DEFAULTS, ENGINE_DEFAULTS_FOR_PARAMS, MEMBER_COUNT_UNKNOWN_MIN_RATIO, UNIT_MIX
 from app.cache.redis import redis_client
 from app.services.credit_service import ensure_daily_credit_available, get_daily_credits, issue_credit_token
-from app.services.zone_service import get_cached_trades, set_cached_trades, get_cached_land, set_cached_land
+from app.services.building_ledger_service import fetch_building
+from app.services.zone_service import (
+    get_cached_trades, set_cached_trades, get_cached_land, set_cached_land,
+    get_cached_building, set_cached_building,
+)
 from app.schemas.realestate.realestate_request import ZoneRequest, ContributionRequest
 from app.schemas.realestate.realestate_response import ZoneResponse
 from app.utils.slider_builder import build_sliders
 from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException, UnauthorizedException
-from AI.engine.schema import ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType
+from AI.engine.prior_asset import ParcelValuation, aggregate_zone
+from AI.engine.schema import (
+    PER_PYEONG_TO_PER_M2, ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType,
+)
 from AI.engine.zone import SELECTABLE_ZONING, build_zone_summary
 from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
 from AI.predict.construction_cost import predict_cost_per_pyeong
@@ -257,6 +264,26 @@ async def fetch_land_characteristics(pnu: str) -> dict:
         logger.warning(f"[ Log ] : V-World Land Characteristics API 오류 {pnu}: {err}")
         return default_data
 
+#건축물대장 조회 (캐시 경유)
+#  종전자산의 건물분을 구하는 데 쓴다. 건물분이 없으면 개인·구역에 같은 배수가 들어가
+#  분담금에서 약분되므로, 이 값이 개인별 차이를 만드는 유일한 입력이다.
+#  실패하면 나대지로 떨어진다 (건물분 0 = 기존 동작) — 조용히 틀리지 않게 fallback 을 남긴다
+async def fetch_building_cached(pnu: str) -> dict:
+    cached = await get_cached_building(pnu)
+    if cached:
+        return cached
+
+    #동기 호출이지만 기존 V-World 호출과 같은 방식이다 (건축HUB 는 병렬에 민감하다)
+    ledger = fetch_building(pnu)
+    data = asdict(ledger)
+
+    #조회 자체가 실패한 경우는 캐시하지 않는다. 키 설정·일시 장애가 굳어버린다
+    if not ledger.fallback:
+        await set_cached_building(pnu, data)
+
+    return data
+
+
 #Pnus 정보를 바탕으로 구체적 정보를 받아오는 API
 @router.post(
     "/zone",
@@ -282,6 +309,10 @@ async def get_zone(req: ZoneRequest, request: Request):
         hints = {h.pnu: h for h in (req.parcels or [])}
 
         failed_pnus = []
+
+        #건축물대장 수집용. 종전자산 토지분+건물분과 조합원 수 실측에 쓴다
+        valuations = []
+        ledger_failed = []
 
         for p in req.pnus:
             hint = hints.get(p)
@@ -315,7 +346,26 @@ async def get_zone(req: ZoneRequest, request: Request):
                     land_category=land_data["land_category"]
                 )
             )
-        
+
+            #건축물대장 : 종전자산 건물분 + 조합원 수 실측에 쓴다
+            bld = await fetch_building_cached(p)
+            if bld.get("fallback"):
+                ledger_failed.append(p)
+
+            valuations.append(
+                ParcelValuation(
+                    pnu=p,
+                    land_area_m2=area_m2,
+                    land_price_per_m2=price,
+                    structure=bld.get("structure") or "",
+                    building_area_m2=float(bld.get("floor_area_m2") or 0.0),
+                    elapsed_years=float(bld.get("elapsed_years") or 0.0),
+                    household_count=int(bld.get("household_count") or 1),
+                    has_building=bool(bld.get("has_building")),
+                    land_category=land_data["land_category"],
+                )
+            )
+
         target_ym = req.target_ym or datetime.now().strftime("%Y-%m")
         zone = build_zone_summary(parcels)
 
@@ -334,6 +384,26 @@ async def get_zone(req: ZoneRequest, request: Request):
         trades = await fetch_recent_trades(lawd_cd, target_ym) if lawd_cd else []
         sale = predict_sale_price_per_m2(target_ym, trades=trades, region=zone.region)
 
+        #종전자산 = 토지분 + 건물분. 구역 전수로 합산한다.
+        #  재조달원가는 공사비 예측값을 쓴다 — 감정평가 실무기준이 재조달원가를
+        #  "기준시점에 재생산하는 데 필요한 적정원가" 로 정의하기 때문이다.
+        #  (지방세 건물신축가격기준액은 과세용 보수값이라 쓰지 않는다)
+        replacement_cost_per_m2 = cost.cost_per_pyeong * PER_PYEONG_TO_PER_M2
+        prior = aggregate_zone(
+            valuations,
+            land_multiplier=ENGINE_DEFAULTS["appraisal_ratio"],
+            replacement_cost_per_m2=replacement_cost_per_m2,
+        )
+
+        #건축물대장을 못 받은 필지는 나대지로 떨어진다. 건물분이 빠지면 분담금이
+        #구역 평균값으로만 나오므로(약분) 반드시 알려준다
+        if ledger_failed:
+            zone.warnings.append(
+                f"{len(ledger_failed)}개 필지의 건축물대장을 불러오지 못해 건물분을 0 으로 두었습니다. "
+                "그 필지는 나대지로 계산됩니다."
+            )
+        zone.warnings.extend(prior.warnings)
+
     #오류 발생시 Service Unavailable Exception 발생
     except Exception as e:
         raise ServiceUnavailableException(f"Zone API 호출에서 오류 발생.")
@@ -345,9 +415,43 @@ async def get_zone(req: ZoneRequest, request: Request):
         #프론트 용도지역 버튼 목록. 엔진 FAR_TABLE 과 어긋나지 않게 서버가 내려준다
         "zoning_options": SELECTABLE_ZONING,
         "selected_zoning": req.zoning,
-        "sliders": build_sliders(zone, cost, req.household_count, sale=sale),
+        "sliders": build_sliders(
+            zone, cost, req.household_count, sale=sale,
+            measured_member_count=prior.member_count if prior.building_parcel_count else None,
+        ),
         "cost_prediction": asdict(cost),
         "sale_prediction": asdict(sale),
+        #종전자산(토지분+건물분)과 실측 조합원 수.
+        #  필지별 원자료(parcels)를 같이 내려준다. /contribution 이 사업기간만큼 민
+        #  평가시점(사업시행인가)으로 다시 집계해야 하는데, 건물은 그때까지 더 낡고
+        #  재조달원가는 오른다. 두 효과의 상쇄 정도가 구조마다 달라(철근콘크리트 −4.6%,
+        #  잔가율 하한에 붙은 벽돌 +46%) 구역 평균 한 배수로는 뭉갤 수 없다.
+        #  프론트가 이 목록을 그대로 /contribution 에 돌려보내면 API 추가 호출이 없다
+        "prior_asset": {
+            "land_total": round(prior.land_total, 1),
+            "building_total": round(prior.building_total, 1),
+            "total": round(prior.total, 1),
+            "official_total": round(prior.official_total, 1),
+            "ratio": round(prior.ratio, 4),
+            "member_count": prior.member_count,
+            "parcel_count": prior.parcel_count,
+            "building_parcel_count": prior.building_parcel_count,
+            "replacement_cost_per_m2": round(replacement_cost_per_m2, 2),
+            "parcels": [
+                {
+                    "pnu": v.pnu,
+                    "land_area_m2": round(v.land_area_m2, 2),
+                    "land_price_per_m2": v.land_price_per_m2,
+                    "structure": v.structure,
+                    "building_area_m2": round(v.building_area_m2, 2),
+                    "elapsed_years": round(v.elapsed_years, 2),
+                    "household_count": v.household_count,
+                    "has_building": v.has_building,
+                    "land_category": v.land_category,
+                }
+                for v in valuations
+            ],
+        },
     }
 
     #실제 차감은 /contribution 계산과 응답 검증이 성공한 후에 진행
