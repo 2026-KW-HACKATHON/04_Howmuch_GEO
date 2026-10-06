@@ -133,7 +133,48 @@ def escalate(value: float, from_ym: str, to_ym: str, annual_rate: float) -> floa
 #지수 표가 있을 때의 시점 보정
 #  표 구간 안에서는 실제 지수를 선형보간해서 쓰고(실측이 추정보다 낫다),
 #  표 마지막 시점 이후만 연율로 복리 연장한다.
-def index_at(ym: str, index: dict[str, float], annual_rate: float | None = None) -> float:
+#장기 수렴 구간(년). 이 기간에 걸쳐 측정 연율이 장기 연율로 선형 수렴한다.
+#  근거 : 부동산·기업가치 DCF 의 "명시적 예측기간" 관행(통상 5~10년). 그 뒤는 안정 성장률을 쓴다.
+#  왜 필요한가 — 측정 창(20년)이 2006~2026 서울 부동산 급등기를 통째로 포함하는데,
+#  그 연율(분양가 6.86%)을 13~18년 복리로 외삽하면 노원구 분양가가 평당 1억을 넘는다.
+#  장기적으로 주택가격 상승률은 소득·물가 성장률에 수렴한다
+CONVERGE_YEARS = 5.0
+
+
+#미래로 외삽할 때의 누적 배수.
+#  long_run_rate 가 없으면 측정 연율로 그냥 복리 (기존 동작).
+#  있으면 CONVERGE_YEARS 에 걸쳐 측정 연율 → 장기 연율로 선형 수렴시킨다.
+#    g(t) = g_단기 + (g_장기 − g_단기) × min(t / CONVERGE_YEARS, 1)
+#  월 단위 중점으로 누적해 구간 경계에서 튀지 않게 한다
+def extrapolate(months_ahead: float, annual_rate: float, long_run_rate: float | None = None) -> float:
+    if months_ahead <= 0:
+        return (1 + annual_rate) ** (months_ahead / 12)
+    if long_run_rate is None or abs(long_run_rate - annual_rate) < 1e-12:
+        return (1 + annual_rate) ** (months_ahead / 12)
+
+    factor = 1.0
+    whole = int(months_ahead)
+    for m in range(whole):
+        t = (m + 0.5) / 12
+        g = annual_rate + (long_run_rate - annual_rate) * min(t / CONVERGE_YEARS, 1.0)
+        factor *= (1 + g) ** (1 / 12)
+
+    #남은 소수 개월
+    rest = months_ahead - whole
+    if rest > 0:
+        t = (whole + rest / 2) / 12
+        g = annual_rate + (long_run_rate - annual_rate) * min(t / CONVERGE_YEARS, 1.0)
+        factor *= (1 + g) ** (rest / 12)
+
+    return factor
+
+
+def index_at(
+    ym: str,
+    index: dict[str, float],
+    annual_rate: float | None = None,
+    long_run_rate: float | None = None,
+) -> float:
     key = str(ym)
     if key in index:
         return index[key]
@@ -156,6 +197,7 @@ def index_at(ym: str, index: dict[str, float], annual_rate: float | None = None)
         if m0 <= target <= m1:
             return v0 + (v1 - v0) * (target - m0) / (m1 - m0)
 
-    #표 밖(이후) : 공통 규칙으로 뽑은 연율로 연장한다
+    #표 밖(이후) : 공통 규칙으로 뽑은 연율로 연장한다.
+    #  long_run_rate 를 주면 장기 연율로 수렴시킨다 (extrapolate 참조)
     m_last, v_last = points[-1]
-    return v_last * (1 + rate) ** ((target - m_last) / 12)
+    return v_last * extrapolate(target - m_last, rate, long_run_rate)

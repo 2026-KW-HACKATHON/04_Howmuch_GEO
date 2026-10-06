@@ -330,11 +330,6 @@ async def get_contribution(req: ContributionRequest, request: Request):
                 capped=True,
             )
 
-    #오류 발생시 Service Unavailable Exception 발생
-    except Exception as err:
-        logger.warning(f"[ Log ] : Contribution API 호출에서 오류 발생 : {str(err)}")
-        raise ServiceUnavailableException("Contribution API 호출에서 오류가 발생했습니다.")
-
         #종전자산 분해 — 화면과 디버깅용.
         #  구역은 전수 집계라 토지분·건물분이 나오고, 개인은 r_개인 을 역산해 ρ 를 만든다
         prior_asset_detail = {
@@ -362,6 +357,11 @@ async def get_contribution(req: ContributionRequest, request: Request):
                 prior_asset_detail["rho"] = round(
                     (prior_asset / owner_official) / zone_prior.ratio, 4
                 )
+
+    #오류 발생시 Service Unavailable Exception 발생
+    except Exception as err:
+        logger.warning(f"[ Log ] : Contribution API 호출에서 오류 발생 : {str(err)}")
+        raise ServiceUnavailableException("Contribution API 호출에서 오류가 발생했습니다.")
 
     #모든 계산 결과를 검증한 뒤에만 크레딧을 차감한다
     result_payload = {

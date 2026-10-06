@@ -117,6 +117,9 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
 
     //결과 및 로딩 상태 useState 영역
     const [zoneInfo, setZoneInfo] = useState<ZoneInfo | null>(null);
+
+    //완화 기준 용적률 (/zone 의 far_base). 4단 체계면 기준용적률이고, 없으면 far_min 이다
+    const [farBase, setFarBase] = useState<number | null>(null);
     const [creditToken, setCreditToken] = useState<string | null>(null);
     const [calcResult, setCalcResult] = useState<ContributionResult | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
@@ -224,6 +227,12 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
                 if (data.prior_asset) {
                     setPriorAsset(data.prior_asset);
                 }
+                //완화 기준 용적률은 서버가 계산해 내려준다 (4단 체계면 기준용적률).
+                //  zone.far_min 은 조례용적률(= 상한용적률)이라 기준·허용 노드를 골라도
+                //  완화가 0 으로 계산되어 임대 의무가 과소해진다 → 서버 값을 그대로 쓴다
+                if (typeof data.far_base === 'number') {
+                    setFarBase(data.far_base);
+                }
                 setZoningStale(false);
                 setZoneCalculated(true);
             } else {
@@ -249,6 +258,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
             setCalcResult(null);
             setMemberRange(null);
             setPriorAsset(null);
+            setFarBase(null);
             setOwnerPnu('');
             setOwnerExclusive(null);
             setError(null);
@@ -278,7 +288,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
                 site_area_m2: zoneInfo.site_area_m2,
                 member_count: sentMemberCount,
                 sliders: engineSliders,
-                far_base: zoneInfo.far_min,
+                far_base: farBase ?? zoneInfo.far_min,
                 land_value_total: zoneInfo.land_value_total,
                 //「적용」을 누른 값만 보낸다. 손대지 않았으면 아예 안 보내고 서버 실측 기본값을 쓴다
                 //  비율이 0 인 줄과 면적이 비어 있는 줄은 입력 중인 상태라 빼고 보낸다
@@ -345,6 +355,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         appliedUnitMix,
         appliedRentalExclusive,
         priorAsset,
+        farBase,
         ownerPnu,
         ownerExclusive,
         formData.name,
