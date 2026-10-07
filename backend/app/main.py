@@ -39,7 +39,7 @@ from app.routers.organization import router as organization_router
 #Database 테이블 생성 이벤트 핸들러 등록
 @app.on_event("startup")
 def create_tables():
-    #Base.metadata.drop_all(bind=engine)
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
 
 #AI 모델 라우터 등록
