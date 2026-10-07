@@ -8,6 +8,8 @@ class UserSignUpRequest(BaseModel):
     email: EmailStr = Field(..., description="이메일 주소")
     user_name: str = Field(..., description="아이디")
     password: str = Field(..., min_length=5, description="비밀번호")
+    account_type: str = Field(default="personal", pattern="^(personal|leader)$")
+    plan_code: str | None = Field(default=None, pattern="^[ABC]$")
 
     @field_validator("password")
     def validate_password(cls, value):
@@ -24,3 +26,7 @@ class UserLoginRequest(BaseModel):
     #사용자 입력 데이터 검증을 위한 Pydantic 모델 정의
     user_name: str = Field(..., description="아이디")
     password: str = Field(..., min_length=5, description="비밀번호 입력")
+
+#조직 가입 요청 스키마
+class JoinOrganizationRequest(BaseModel):
+    invitation_code: str = Field(..., min_length=4, max_length=32)

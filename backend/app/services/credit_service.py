@@ -6,7 +6,6 @@ import logging
 import secrets
 from zoneinfo import ZoneInfo
 
-
 #일일 사용 가능한 크레딧 수 제한
 DAILY_CREDIT_LIMIT = 5
 
@@ -48,6 +47,16 @@ return redis.call('SET', KEYS[1], 'pending', 'EX', ARGV[1], 'NX')
 _CONSUME_CREDIT_TOKEN_SCRIPT = """
 local token_state = redis.call('GET', KEYS[2])
 local credits = redis.call('GET', KEYS[1])
+if token_state == 'unlimited-consumed' then
+    if ARGV[3] == '1' then
+        return -3
+    end
+    return -2
+end
+if ARGV[3] == '1' and token_state == 'pending' then
+    redis.call('SET', KEYS[2], 'unlimited-consumed', 'EX', ARGV[2])
+    return -3
+end
 if token_state == 'consumed' then
     if not credits then
         redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
@@ -113,8 +122,8 @@ async def issue_credit_token(user_id: int) -> str:
         )
     return token
 
-#계산 성공 후 토큰을 소비. 동일 토큰의 재계산은 추가 차감하지 않는다
-async def consume_credit_token(user_id: int, token: str) -> int:
+#계산 성공 후 토큰을 소비. 동일 토큰의 재계산은 추가 차감하지 않음
+async def consume_credit_token(user_id: int, token: str, unlimited: bool = False) -> int:
     daily_key, ttl_seconds, _ = _daily_key_and_ttl(user_id)
 
     try:
@@ -125,6 +134,7 @@ async def consume_credit_token(user_id: int, token: str) -> int:
             f"{daily_key}:token:{token}",
             DAILY_CREDIT_LIMIT,
             ttl_seconds,
+            1 if unlimited else 0,
         )
     except RedisError as err:
         logger.exception("Unable to consume credit token for user %s", user_id)
@@ -133,6 +143,8 @@ async def consume_credit_token(user_id: int, token: str) -> int:
         ) from err
 
     remaining = int(remaining)
+    if remaining == -3:
+        return -1
     if remaining == -1:
         raise ServiceUnavailableException(
             message="오늘 사용할 수 있는 크레딧을 모두 사용했습니다."
