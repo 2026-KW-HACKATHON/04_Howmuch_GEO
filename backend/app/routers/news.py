@@ -44,33 +44,65 @@ if not KAKAO_API_KEY:
     status_code = status.HTTP_200_OK,
 )
 async def get_region_news(request: NewsRequest):
-    search_keyword = f"{request.query}"
-
-    url = f"https://dapi.kakao.com/v2/search/web?query={search_keyword}&sort=recency&size=8"
 
     headers = {
         "Authorization": f"KakaoAK {KAKAO_API_KEY}"
     }
+
+    cleaned_documents = []
     
     try:
         async with httpx.AsyncClient() as client:
             logger.warning(f"[ Log ] : News API 호출 시도 : {str(request.query)}")
+
+            #재개발 뉴스 검색
+
+            search_keyword = f"{request.query} 재개발"
+            url = f"https://dapi.kakao.com/v2/search/web?query={search_keyword}&sort=recency&size=8"
+            cleaned_documents = []
+
             res = await client.get(url, headers=headers)
+
             if res.status_code == 200:
                 raw_documents = res.json().get("documents", [])
-                cleaned_documents = []
 
                 for item in raw_documents:
+                    if clean_html(item.get("url")[:12]) == "https://namu" or clean_html(item.get("url")[:25]) == "https://gall.dcinside.com":
+                        continue
+                    if clean_html(item.get("title")).endswith("pdf"):
+                        continue
                     cleaned_documents.append({
                     "title": clean_html(item.get("title")),
                     "contents": clean_html(item.get("contents")),
                     "url": item.get("url"),
                     "published_at": item.get("datetime")
                 })
+
+            #재건축 뉴스 검색
+
+            search_keyword = f"{request.query} 재건축"
+            url = f"https://dapi.kakao.com/v2/search/web?query={search_keyword}&sort=recency&size=8"
+
+            res = await client.get(url, headers=headers)
+
+            if res.status_code == 200:
+                raw_documents = res.json().get("documents", [])
+
+                for item in raw_documents:
+                    if clean_html(item.get("url")[:12]) == "https://namu":
+                        continue
+                    if clean_html(item.get("title")).endswith("pdf"):
+                        continue
+                    cleaned_documents.append({
+                    "title": clean_html(item.get("title")),
+                    "contents": clean_html(item.get("contents")),
+                    "url": item.get("url"),
+                    "published_at": item.get("datetime")
+                })                
+            
+            #결과 반환
+            return cleaned_documents
                 
-                return cleaned_documents
-                
-            return []
     except:
         logger.warning(f"[ Log ] : News API 호출 실패")
         raise ServiceUnavailableException
