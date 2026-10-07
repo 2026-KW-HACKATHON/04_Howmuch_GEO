@@ -37,7 +37,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app/backend
+      - ./backend:/app
       - ./AI:/app/AI
     environment:
       - PYTHONUNBUFFERED=1
@@ -64,6 +64,7 @@ services:
       - /app/node_modules
     environment:
       - VITE_VWORLD_WFS_URL=/vworld-api/req/wfs
+      - VITE_API_BASE_URL=http://localhost:8000
       - CHOKIDAR_USEPOLLING=true
     dns:
       - 8.8.8.8

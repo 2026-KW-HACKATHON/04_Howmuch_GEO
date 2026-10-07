@@ -1,7 +1,7 @@
 from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException
-from app.schemas.payment.payment_response import PaymentResponse
 from app.schemas.payment.payment_request import PaymentRequest
 from fastapi import APIRouter, Query
+from fastapi.responses import RedirectResponse
 import httpx
 import logging
 import os
@@ -54,7 +54,7 @@ async def kakao_pay_ready(request: PaymentRequest):
         "tax_free_amount": request.tax_free_amount,
         "approval_url": f"{BACKEND_URL}/api/v1/kakao-pay/approve",
         "cancel_url": f"{BACKEND_URL}/api/v1/kakao-pay/cancel",
-        "fail_url": f"{BACKEND_URL}/api/v1/kakao-pay/fail",
+        "fail_url": f"{BACKEND_URL}/api/v1/kakao-pay/fail"
     }
 
     async with httpx.AsyncClient() as client:
@@ -71,11 +71,10 @@ async def kakao_pay_ready(request: PaymentRequest):
     return {"next_redirect_pc_url": result["next_redirect_pc_url"], "tid": result["tid"]}
 
 #결제 승인 API 엔드포인트
-@router.get("/kakao-pay/approve")
-async def kakao_pay_approve(
-    pg_token: str = Query(...)
-    response_model=PaymentResponse)
-    :
+@router.get(
+    "/kakao-pay/approve"
+)
+async def kakao_pay_approve(pg_token: str = Query(...)):
 
     logger.warning("[ Log ] : 결제 승인 API 시도중.")
     tid = memory_db.get("tid")
@@ -106,16 +105,16 @@ async def kakao_pay_approve(
         raise ServiceUnavailableException(response.json())
 
     logger.warning("[ Log ] : 결제 승인 API 성공.")
-    return response.json()
+    return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/payment?status=success", status_code=303)
 
 #결제 취소 API 엔드포인트
 @router.get("/kakao-pay/cancel")
 def kakao_pay_cancel():
     logger.warning("[ Log ] : 결제가 취소되었습니다.")
-    return {"message": "사용자가 결제를 취소했습니다."}
+    return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/payment?status=cancel", status_code=303)
 
 #결제 실패 API 엔드포인트
 @router.get("/kakao-pay/fail")
 def kakao_pay_fail():
     logger.warning("[ Log ] : 결제가 실패했습니다.")
-    return {"message": "결제 진행 중 실패가 발생했습니다."}
+    return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/payment?status=fail", status_code=303)

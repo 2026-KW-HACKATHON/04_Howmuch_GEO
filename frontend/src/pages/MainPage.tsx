@@ -7,6 +7,8 @@ import NewsPanel from '../components/NewsPanel';
 import ReCAPTCHA from 'react-google-recaptcha';
 import { useMainPage } from '../hooks/useMainPage';
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import type { PaymentRequest } from '../api/payment_api';
 
 //메인 페이지
 export default function MainPage() {
@@ -14,6 +16,13 @@ export default function MainPage() {
     const [activePanel, setActivePanel] = useState<'news' | 'prediction'>('news');
     const [regionName, setRegionName] = useState('');
     const profileRef = useRef<HTMLDivElement>(null);
+    
+    const paymentParam: PaymentRequest = {
+        item_name: '개인 Daily 크레딧 충전',
+        quantity: 1,
+        price: 1,
+        tax_free_amount: 0,
+    };
 
     //MainPage Hook 사용
     const {
@@ -32,8 +41,6 @@ export default function MainPage() {
         userEmail,
         dailyCredits,
         creditsUnavailable,
-        resettingCredits,
-        resetCreditsAction,
     } = useMainPage();
 
     //프로필 메뉴 외부 클릭 시 닫기 및 ESC 키로 닫기
@@ -93,14 +100,14 @@ export default function MainPage() {
                                 오늘 크레딧 {dailyCredits ?? '-'} / 5
                             </p>
                         </div>
-                        <button
-                            type="button"
-                            onClick={resetCreditsAction}
-                            disabled={resettingCredits || creditsUnavailable}
-                            className="w-full border-b border-slate-100 px-4 py-3 text-left text-sm font-medium text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        <Link
+                            to="/payment"
+                            state={{ paymentParam }}
+                            onClick={() => setIsProfileOpen(false)}
+                            className="block w-full border-b border-slate-100 px-4 py-3 text-left text-sm font-medium text-blue-700 transition hover:bg-blue-50"
                         >
-                            {resettingCredits ? '초기화 중...' : '크레딧 초기화'}
-                        </button>
+                            크레딧 결제
+                        </Link>
                         <button
                             type="button"
                             onClick={logoutButtonAction}

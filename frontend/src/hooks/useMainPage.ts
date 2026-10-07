@@ -2,7 +2,7 @@ import { getVWorldCadastral } from '../api/cadastral_api';
 import { getZoneInfo, getContributionInfo } from '../api/realestate_api';
 import { ParcelInfo } from '../utils/parcel';
 import { useCallback, useState, useEffect } from 'react';
-import { userLogout, userInfo, userCredits, resetUserCredits } from '../api/user_api';
+import { userLogout, userInfo, userCredits } from '../api/user_api';
 import axios from 'axios';
 
 //MainPage Hook
@@ -17,7 +17,7 @@ export const useMainPage = () => {
     const [creditsUnavailable, setCreditsUnavailable] = useState<boolean>(false);
     const [creditsResetAt, setCreditsResetAt] = useState<string | null>(null);
     const [resettingCredits, setResettingCredits] = useState<boolean>(false);
-
+    const [kakaoPayPopUpOn, setKakaoPayPopUpOn] = useState<boolean>(false);
     //선택 필지의 면적·공시지가 (지적도 응답에서 뽑은 값)
     const [selectedParcels, setSelectedParcels] = useState<ParcelInfo[]>([]);
 
@@ -83,23 +83,6 @@ export const useMainPage = () => {
             alert("로그아웃 중 오류가 발생했습니다. 다시 시도해주세요.");
         }
     }
-
-    const resetCreditsAction = async () => {
-        if (!window.confirm("오늘 사용할 크레딧을 5개로 초기화할까요?")) return;
-
-        setResettingCredits(true);
-        try {
-            const credits = await resetUserCredits();
-            setDailyCredits(credits.credits_remaining);
-            setCreditsResetAt(credits.resets_at);
-            setCreditsUnavailable(false);
-        } catch (err) {
-            console.error("[ 크레딧 초기화 오류 발생 ] : ", err);
-            alert("크레딧 초기화에 실패했습니다. 잠시 후 다시 시도해주세요.");
-        } finally {
-            setResettingCredits(false);
-        }
-    };
 
 
     //선택 필지 갱신 Handler
@@ -169,6 +152,15 @@ export const useMainPage = () => {
         }
     }, []);
 
+    const toggleResetCredit = () => {
+        if(kakaoPayPopUpOn === true){
+            setKakaoPayPopUpOn(false);
+        } else{
+            setKakaoPayPopUpOn(true);
+        }
+    }
+
+
     return {
         isOpen,
         isVerified,
@@ -186,6 +178,7 @@ export const useMainPage = () => {
         dailyCredits,
         creditsUnavailable,
         resettingCredits,
-        resetCreditsAction
+        toggleResetCredit,
+        kakaoPayPopUpOn
     };
 }
