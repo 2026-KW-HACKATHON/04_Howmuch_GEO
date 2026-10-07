@@ -5,6 +5,7 @@ export interface PaymentRequest {
     quantity: number
     price: number
     tax_free_amount: number
+    plan_code?: 'Standard' | 'Pro' | 'Premium'
 }
 
 export interface PaymentReadyResponse {
