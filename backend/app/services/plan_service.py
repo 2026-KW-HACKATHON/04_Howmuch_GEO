@@ -20,7 +20,7 @@ PLANS = {
 
 #Plan 조회 함수
 def get_plan(plan_code: str) -> Plan | None:
-    return PLANS.get(plan_code.upper())
+    return PLANS.get(plan_code.strip().title())
 
 #Plan 기간 계산 함수
 def add_plan_duration(start: datetime, months: int) -> datetime:
