@@ -218,11 +218,36 @@ def annual_rate(index: dict[str, float] | None = None) -> float:
     return trend.estimate_annual_rate(index or load_index()).annual_rate
 
 
-#지수로 값을 시점 이동한다. 사업기간 보정에 쓴다
-def escalate(price: float, from_ym: str, to_ym: str, index: dict[str, float] | None = None) -> float:
+#장기 수렴 목표 연율.
+#  분양가는 장기적으로 건설원가보다 영구히 빠르게 오를 수 없다 —
+#  그러면 건설업 이익률이 무한히 커지므로 성립하지 않는다.
+#  그래서 건설공사비지수 연율을 장기 수렴값으로 쓴다. **새 상수가 아니라 이미 측정한 값**이다.
+#  (측정 분양가 연율 6.86% / 공사비 3.97%. 13년 복리로 외삽하면 노원구가 평당 7,816만원,
+#   18년이면 1억 889만원이 되어 비례율이 238% 까지 치솟았다)
+def long_run_rate() -> float:
+    from AI.predict.construction_cost import load_index as load_cost_index
+
+    return trend.estimate_annual_rate(load_cost_index()).annual_rate
+
+
+#지수로 값을 시점 이동한다. 사업기간 보정에 쓴다.
+#  미래로 나갈 때는 trend.CONVERGE_YEARS 에 걸쳐 장기 연율로 수렴시킨다.
+#  과거 사례를 현재로 끌어오는 보정(지수표 안)에는 영향이 없다 — 표가 있는 구간은 보간이다
+def escalate(
+    price: float,
+    from_ym: str,
+    to_ym: str,
+    index: dict[str, float] | None = None,
+    converge: bool = True,
+) -> float:
     index = index or load_index()
     rate = trend.estimate_annual_rate(index).annual_rate
-    return price * trend.index_at(to_ym, index, rate) / trend.index_at(from_ym, index, rate)
+    lr = long_run_rate() if converge else None
+    return (
+        price
+        * trend.index_at(to_ym, index, rate, long_run_rate=lr)
+        / trend.index_at(from_ym, index, rate, long_run_rate=lr)
+    )
 
 
 #분양가 예측. 분양 사례가 있으면 그것을 쓰고, 없으면 실거래 시세에 계수를 곱한다

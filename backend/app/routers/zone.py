@@ -14,7 +14,7 @@ from AI.engine.prior_asset import ParcelValuation, aggregate_zone
 from AI.engine.schema import (
     PER_PYEONG_TO_PER_M2, ParcelInfo, ProjectType, UnitMix, OwnerInput, ProjectParams, UnitType,
 )
-from AI.engine.zone import SELECTABLE_ZONING, build_zone_summary
+from AI.engine.zone import SELECTABLE_ZONING, build_zone_summary, far_nodes
 from AI.engine.calc import MemberCountRange, calc_allocation, calc_area, calc_contribution, calc_project, member_count_range, unit_options
 from AI.predict.construction_cost import predict_cost_per_pyeong
 from AI.predict.sale_price import Trade, fetch_trades, predict_sale_price_per_m2
@@ -410,7 +410,13 @@ async def get_zone(req: ZoneRequest, request: Request):
 
     result = {
         "zone": asdict(zone),
-        "far_base": zone.far_min,
+        #완화 기준이 되는 용적률.
+        #  도시정비법 제54조의 임대 의무는 "기준 구간 대비 완화분" 에 붙는다.
+        #  4단 체계(서울시 2030 정비기본계획)에서 그 기준은 **기준용적률**이다.
+        #  조례용적률(= 상한용적률 = far_min)을 쓰면 기준·허용 노드를 골라도
+        #  완화가 0 으로 계산되어 임대 의무가 과소해진다
+        #  (3종일반 실측: far_base 250 이면 210·230 선택 시 완화 0, 250·300 비례율이 똑같이 153%)
+        "far_base": far_nodes(zone.zoning, zone.far_min, zone.far_max)[0],
         "target_ym": target_ym,
         #프론트 용도지역 버튼 목록. 엔진 FAR_TABLE 과 어긋나지 않게 서버가 내려준다
         "zoning_options": SELECTABLE_ZONING,

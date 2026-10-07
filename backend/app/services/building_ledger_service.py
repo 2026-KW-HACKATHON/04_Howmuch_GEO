@@ -46,17 +46,24 @@ MAX_EXPOS_PAGES = 50
 CALL_GAP = 0.12
 
 SESSION = requests.Session()
+#건축HUB 는 간헐적으로 503 SERVICETIMEOUT_ERROR 를 낸다 (실측 3회 중 1회).
+#  필지마다 호출하므로 재시도가 없으면 구역의 1/3 이 나대지로 떨어져 건물분이 크게 과소된다.
+#  (485필지 구역이면 160필지가 날아간다 — 경고는 뜨지만 숫자가 크게 틀어진다)
 SESSION.mount(
     "https://",
     HTTPAdapter(
         max_retries=Retry(
-            total=3,
-            backoff_factor=0.5,
+            total=5,
+            backoff_factor=0.6,
             status_forcelist=(429, 500, 502, 503, 504),
             allowed_methods=("GET",),
+            raise_on_status=False,
         )
     ),
 )
+
+#200 인데 본문이 비거나 JSON 이 아닌 경우도 있다 (Retry 가 못 잡는다). 그때 직접 다시 부른다
+JSON_RETRY = 3
 
 #주용도로 주거 여부를 걸러내지 않는다.
 #  처음에는 주거용 주용도만 세대수를 셌는데, 월계동 실측에서 356명이 누락됐다.
@@ -103,11 +110,37 @@ def parse_pnu(pnu: str) -> tuple[str, str, str, str, str] | None:
 
 def _page(url: str, params: dict, page_no: int, rows_per_page: int) -> tuple[list[dict], int]:
     #pageNo 는 반드시 보낸다. 없으면 numOfRows 가 무시되고 1건만 온다
-    response = SESSION.get(
-        url, params={**params, "numOfRows": rows_per_page, "pageNo": page_no}, timeout=15
-    )
-    response.raise_for_status()
-    body = response.json().get("response", {}).get("body", {})
+    call = {**params, "numOfRows": rows_per_page, "pageNo": page_no}
+
+    payload = None
+    last_error: Exception | None = None
+    for attempt in range(JSON_RETRY):
+        if attempt:
+            time.sleep(CALL_GAP * (attempt + 1))
+        response = SESSION.get(url, params=call, timeout=15)
+        try:
+            payload = response.json()
+        except ValueError as err:
+            #200 인데 본문이 비었거나 JSON 이 아니다. 재시도 대상
+            last_error = err
+            payload = None
+            continue
+
+        #정상 응답은 "response" 키를 갖는다.
+        #  장애 시에는 OpenAPI_ServiceResponse.cmmMsgHeader 로 온다 (503 SERVICETIMEOUT_ERROR 등)
+        if "response" in payload:
+            break
+
+        fault = (payload.get("OpenAPI_ServiceResponse") or {}).get("cmmMsgHeader") or {}
+        last_error = RuntimeError(
+            f"{fault.get('errMsg') or 'UNKNOWN'} / {fault.get('returnAuthMsg') or response.status_code}"
+        )
+        payload = None
+
+    if payload is None:
+        raise last_error or RuntimeError("건축물대장 응답을 받지 못했습니다")
+
+    body = payload.get("response", {}).get("body", {})
 
     try:
         total = int(body.get("totalCount") or 0)

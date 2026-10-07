@@ -230,6 +230,16 @@ def calc_project(params: ProjectParams, alloc: Allocation) -> ProjectResult:
     )
 
     sale_count = sum(u.count for u in alloc.unit_types)
+
+    #평형별 세대수가 전부 0 이면 구역이 너무 작다. calc_post_asset 이 ValueError 를 내기 전에 알린다
+    buildable = [u for u in alloc.unit_types if u.count > 0]
+    if len(buildable) < len(alloc.unit_types):
+        dropped = [u.name for u in alloc.unit_types if u.count <= 0]
+        warnings.append(
+            f"구역이 작아 {', '.join(dropped)}형은 0세대입니다. "
+            "필지를 더 선택하거나 세부 설정에서 평형을 작게 바꿔 보세요."
+        )
+
     if params.member_count > sale_count:
         warnings.append(
             f"조합원 수({params.member_count})가 분양 세대수({sale_count})보다 많습니다."
@@ -241,6 +251,24 @@ def calc_project(params: ProjectParams, alloc: Allocation) -> ProjectResult:
     )
     if used_supply_m2 > areas.ground_m2:
         warnings.append("공급면적 합계가 지상 연면적을 초과합니다. 세대수/평형을 확인하세요.")
+
+    # 용적률 상향 안내 : 올렸는데 분담금이 늘어나는 이유를 알려준다
+    #   도시정비법 제54조에 따라 완화 용적률의 50% 를 임대로 공급해야 하는데,
+    #   임대 인수가는 표준건축비(분양가의 약 11%)뿐이라 완화분의 수입이 크게 깎인다.
+    #   게다가 임대 1세대 면적이 작아 세대수가 더 빨리 늘고, 지하(세대수 비례)가 같이 커진다.
+    #   → 모델상으로는 용적률을 올릴수록 사업성이 나빠진다. 계산은 일관되지만 직관과 반대라 알린다.
+    #   서울시가 2024년 "사업성 보정계수"를 만든 이유가 바로 이 구조다
+    #   (임대 부담 없이 허용용적률을 올려준다). 그 제도는 아직 반영하지 않았다 → ROADMAP [6]
+    if params.floor_area_ratio > params.far_base:
+        uplift_share = 1 - params.far_base / params.floor_area_ratio
+        rental_share = alloc.rental_count * params.rental_supply_area_m2 / areas.supply_total_m2
+        warnings.append(
+            f"용적률을 기준({params.far_base:.0f}%)보다 {uplift_share:.0%} 올리면 "
+            f"완화분의 {params.uplift_rental_share:.0%}를 임대로 공급해야 해 "
+            f"임대 비중이 {rental_share:.0%}까지 올라갑니다(도시정비법 제54조). "
+            "임대는 표준건축비로만 인수되어 분담금이 오히려 늘 수 있습니다. "
+            "서울시 사업성 보정계수(임대 부담 없는 허용용적률 상향)는 아직 반영되지 않았습니다."
+        )
 
     # 비례율 경고 : 벗어난 정도에 따라 단계를 나눈다
     #   비례율은 사업 수지로 계산되므로 공사비·분양가·용적률을 조절하면 함께 움직인다
@@ -445,6 +473,13 @@ def calc_contribution_all(
 
     units = []
     for unit in alloc.unit_types:
+        #0세대 평형은 지을 수 없으므로 목록에서 뺀다.
+        #  구역이 작으면 세대수 내림(int)으로 큰 평형이 0 이 되는데,
+        #  그대로 내보내면 화면에 "114형 0세대 / 분담금 19억" 처럼 의미 없는 줄이 뜬다.
+        #  (실측: 198㎡ 단일 필지 → 지상 416㎡ → 114형 공급 153.9㎡ 가 0세대)
+        if unit.count <= 0:
+            continue
+
         price = member_price(params, alloc.unit_types, unit.name)
         contribution = price - right_value
         units.append(

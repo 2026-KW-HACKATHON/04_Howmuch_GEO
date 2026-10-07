@@ -30,6 +30,43 @@ FAR_TABLE = {
     "자연녹지지역":     (50, 100),
 }
 
+# 용도지역 → (기준용적률, 허용용적률, 상한용적률, 법적상한용적률) %
+#   서울시 2030 도시·주거환경정비기본계획의 4단 체계다. FAR_TABLE 의 2단과 관계는 이렇다
+#     FAR_TABLE[0] 조례용적률 = 상한용적률,   FAR_TABLE[1] = 법적상한용적률
+#   정비사업은 기준용적률에서 출발해
+#     허용 = 기준 + (인센티브량 × 사업성 보정계수)   ← 보정계수는 아직 미구현
+#     상한 = 허용 + 공공기여 등                      ← 조례용적률
+#     법적상한 = 국토계획법 시행령 제85조            ← 심의 통과 전제
+#   까지 올라간다.
+#
+#   ※ 2·3종일반주거만 확실한 출처가 있어 넣었다. 나머지는 2단(상한·법적상한)으로 축퇴한다 —
+#     근거 없는 숫자를 끼워넣지 않는다. 재개발 대상지는 대부분 2·3종일반이다
+#   ※ 2종일반은 상한 250 = 법적상한 250 이다 (법 범위가 100~250)
+FAR_TIERS = {
+    "제2종일반주거지역": (190, 210, 250, 250),
+    "제3종일반주거지역": (210, 230, 250, 300),
+}
+
+#기준 → 허용 사이의 인센티브량(%p). 사업성 보정계수가 여기에 곱해진다
+#  2·3종일반 모두 20%p 로 같다 (190→210, 210→230)
+def far_incentive(zoning: str) -> float:
+    tiers = FAR_TIERS.get(normalize_zoning(zoning))
+    return (tiers[1] - tiers[0]) if tiers else 0.0
+
+
+#용적률 노드 목록. 중복을 제거하고 오름차순으로 돌려준다
+#  (2종일반처럼 상한 == 법적상한 이면 3노드가 된다)
+def far_nodes(zoning: str | None, far_min: float, far_max: float) -> list[float]:
+    tiers = FAR_TIERS.get(normalize_zoning(zoning or ""))
+    values = list(tiers) if tiers else [far_min, far_max]
+    out: list[float] = []
+    for v in values:
+        f = float(v)
+        if f not in out:
+            out.append(f)
+    return sorted(out)
+
+
 # 용적률이 낮아 정비사업 대상이 되기 어려운 용도지역 (선택은 막지 않고 안내만 한다)
 LOW_DENSITY_ZONING = ("보전녹지지역", "생산녹지지역", "자연녹지지역")
 
