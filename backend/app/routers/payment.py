@@ -1,7 +1,14 @@
-from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException
+import secrets
+from datetime import datetime, timezone
+from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException, UnauthorizedException
 from app.schemas.payment.payment_request import PaymentRequest
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import RedirectResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from app.database.database_connection import get_db
+from app.models.account import Organization, PaymentOrder
+from app.services.plan_service import get_plan, add_plan_duration
 import httpx
 import logging
 import os
@@ -21,8 +28,6 @@ KAKAO_PAYMENT_CID = os.getenv("KAKAO_PAYMENT_CID")
 KAKAO_PAYMENT_BASE_URL = os.getenv("KAKAO_PAYMENT_BASE_URL")
 BACKEND_URL = os.getenv("BACKEND_URL")
 
-memory_db = {}
-
 #환경변수 유무 확인
 if not KAKAO_PAYMENT_SECERT_KEY:
     raise BadRequestException("KAKAO_PAYMENT_SECERT_KEY 환경 변수가 설정되지 않았습니다.")
@@ -35,9 +40,26 @@ if not BACKEND_URL:
 
 #결제 API 엔드포인트
 @router.post("/kakao-pay/ready")
-async def kakao_pay_ready(request: PaymentRequest):
+async def kakao_pay_ready(body: PaymentRequest, request: Request, session: Session = Depends(get_db)):
+    user_id = request.session.get("user_id")
+    if user_id is None:
+        raise UnauthorizedException("로그인이 필요합니다.")
+
+    organization = session.execute(
+        select(Organization).where(Organization.leader_user_id == int(user_id))
+    ).scalar_one_or_none()
+    if not organization:
+        raise BadRequestException("조합장 플랜 결제는 조합장 계정만 할 수 있습니다.")
+    if organization.status not in {"pending_payment", "active"}:
+        raise BadRequestException("현재 결제할 수 없는 조합 상태입니다.")
+
+    plan = get_plan(organization.plan_code)
+    if not plan:
+        raise BadRequestException("유효하지 않은 조합 플랜입니다.")
+
     logger.warning("[ Log ] : 결제 준비 API 시도중.")
     url = f"{KAKAO_PAYMENT_BASE_URL}/ready"
+    partner_order_id = secrets.token_urlsafe(24)
 
     headers = {
         "Authorization": f"SECRET_KEY {KAKAO_PAYMENT_SECERT_KEY}",
@@ -46,15 +68,15 @@ async def kakao_pay_ready(request: PaymentRequest):
 
     payload = {
         "cid": KAKAO_PAYMENT_CID,
-        "partner_order_id": "order_id_12345",
-        "partner_user_id": "user_id_999",
-        "item_name": request.item_name,
-        "quantity": request.quantity,
-        "total_amount": request.price,
-        "tax_free_amount": request.tax_free_amount,
-        "approval_url": f"{BACKEND_URL}/api/v1/kakao-pay/approve",
-        "cancel_url": f"{BACKEND_URL}/api/v1/kakao-pay/cancel",
-        "fail_url": f"{BACKEND_URL}/api/v1/kakao-pay/fail"
+        "partner_order_id": partner_order_id,
+        "partner_user_id": str(user_id),
+        "item_name": plan.name,
+        "quantity": 1,
+        "total_amount": plan.price,
+        "tax_free_amount": 0,
+        "approval_url": f"{BACKEND_URL}/api/v1/kakao-pay/approve?partner_order_id={partner_order_id}",
+        "cancel_url": f"{BACKEND_URL}/api/v1/kakao-pay/cancel?partner_order_id={partner_order_id}",
+        "fail_url": f"{BACKEND_URL}/api/v1/kakao-pay/fail?partner_order_id={partner_order_id}"
     }
 
     async with httpx.AsyncClient() as client:
@@ -66,22 +88,40 @@ async def kakao_pay_ready(request: PaymentRequest):
     
     result = response.json()
 
-    memory_db["tid"] = result["tid"]
+    session.add(PaymentOrder(
+        partner_order_id=partner_order_id,
+        user_id=int(user_id),
+        organization_id=organization.organization_id,
+        plan_code=plan.code,
+        tid=result["tid"],
+        status="ready",
+    ))
+    session.commit()
     logger.warning("[ Log ] : 결제 준비 API 성공.")
-    return {"next_redirect_pc_url": result["next_redirect_pc_url"], "tid": result["tid"]}
+    return {"next_redirect_pc_url": result["next_redirect_pc_url"], "tid": result["tid"], "item_name": plan.name, "price": plan.price}
 
 #결제 승인 API 엔드포인트
 @router.get(
     "/kakao-pay/approve"
 )
-async def kakao_pay_approve(pg_token: str = Query(...)):
+async def kakao_pay_approve(
+    pg_token: str = Query(...),
+    partner_order_id: str = Query(...),
+    session: Session = Depends(get_db),
+):
 
     logger.warning("[ Log ] : 결제 승인 API 시도중.")
-    tid = memory_db.get("tid")
-
-    if not tid:
+    order = session.execute(
+        select(PaymentOrder).where(PaymentOrder.partner_order_id == partner_order_id)
+    ).scalar_one_or_none()
+    if not order or not order.tid or order.status != "ready":
         logger.warning("[ Log ] : 결제 승인 API 실패.")
         raise ServiceUnavailableException("결제 준비 정보(tid)를 찾을 수 없습니다.")
+
+    organization = session.get(Organization, order.organization_id)
+    plan = get_plan(order.plan_code)
+    if not organization or not plan:
+        raise ServiceUnavailableException("결제할 조합 플랜 정보를 찾을 수 없습니다.")
 
     url = f"{KAKAO_PAYMENT_BASE_URL}/approve"
     headers = {
@@ -91,9 +131,9 @@ async def kakao_pay_approve(pg_token: str = Query(...)):
 
     payload = {
         "cid": KAKAO_PAYMENT_CID,
-        "tid": tid,
-        "partner_order_id": "order_id_12345",
-        "partner_user_id": "user_id_999",
+        "tid": order.tid,
+        "partner_order_id": partner_order_id,
+        "partner_user_id": str(order.user_id),
         "pg_token": pg_token
     }
 
@@ -104,17 +144,36 @@ async def kakao_pay_approve(pg_token: str = Query(...)):
         logger.warning("[ Log ] : 결제 승인 API 실패.")
         raise ServiceUnavailableException(response.json())
 
+    now = datetime.now(timezone.utc)
+    start = organization.paid_until if organization.paid_until and organization.paid_until > now else now
+    organization.paid_until = add_plan_duration(start, plan.duration_months)
+    organization.status = "active"
+    order.status = "approved"
+    session.commit()
     logger.warning("[ Log ] : 결제 승인 API 성공.")
     return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/payment?status=success", status_code=303)
 
 #결제 취소 API 엔드포인트
 @router.get("/kakao-pay/cancel")
-def kakao_pay_cancel():
+def kakao_pay_cancel(partner_order_id: str | None = Query(default=None), session: Session = Depends(get_db)):
     logger.warning("[ Log ] : 결제가 취소되었습니다.")
+    _update_payment_status(session, partner_order_id, "cancelled")
     return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/payment?status=cancel", status_code=303)
 
 #결제 실패 API 엔드포인트
 @router.get("/kakao-pay/fail")
-def kakao_pay_fail():
+def kakao_pay_fail(partner_order_id: str | None = Query(default=None), session: Session = Depends(get_db)):
     logger.warning("[ Log ] : 결제가 실패했습니다.")
+    _update_payment_status(session, partner_order_id, "failed")
     return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/payment?status=fail", status_code=303)
+
+
+def _update_payment_status(session: Session, partner_order_id: str | None, new_status: str) -> None:
+    if not partner_order_id:
+        return
+    order = session.execute(
+        select(PaymentOrder).where(PaymentOrder.partner_order_id == partner_order_id)
+    ).scalar_one_or_none()
+    if order and order.status == "ready":
+        order.status = new_status
+        session.commit()

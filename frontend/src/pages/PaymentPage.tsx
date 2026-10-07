@@ -2,13 +2,19 @@ import { useCallback, useState, useEffect } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { postPayment } from '../api/payment_api';
 import type { PaymentRequest } from '../api/payment_api';
-import { resetUserCredits, userInfo } from '../api/user_api';
+import { userInfo } from '../api/user_api';
 
-const TEST_PAYMENT = {
+const DEFAULT_PAYMENT: PaymentRequest = {
     item_name: '',
     quantity: 0,
     price: 0,
     tax_free_amount: 0,
+};
+
+const PLAN_PRICES: Record<'A' | 'B' | 'C', number> = {
+    A: 10000,
+    B: 50000,
+    C: 100000,
 };
 
 interface PaymentLocationState {
@@ -21,14 +27,10 @@ export default function PaymentPage() {
     const { state } = useLocation();
     const [searchParams] = useSearchParams();
     const paymentStatus = searchParams.get('status');
-    const paymentParam = (state as PaymentLocationState | null)?.paymentParam ?? TEST_PAYMENT;
-
-    useEffect(() => {
-        if(paymentStatus==='success'){
-            resetCreditsAction();
-        }
-    }, [paymentStatus]);
-
+    const requestedPayment = (state as PaymentLocationState | null)?.paymentParam ?? DEFAULT_PAYMENT;
+    const paymentParam = requestedPayment.plan_code
+        ? { ...requestedPayment, price: PLAN_PRICES[requestedPayment.plan_code] }
+        : requestedPayment;
 
     //로그인 상태 확인
     const checkLoginStatus = useCallback(async () => {
@@ -75,15 +77,6 @@ export default function PaymentPage() {
         }
     };
 
-    const resetCreditsAction = async () => {
-            try {
-                const credits = await resetUserCredits();
-            } catch (err) {
-                console.error("[ 크레딧 초기화 오류 발생 ] : ", err);
-                alert("크레딧 초기화에 실패했습니다. 잠시 후 다시 시도해주세요.");
-            }
-        };
-
     return (
         <main className="min-h-screen bg-[#f5f7f4] text-slate-900">
             <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-5 sm:px-10">
@@ -108,7 +101,7 @@ export default function PaymentPage() {
 
                     {paymentStatus === 'success' && (
                         <div role="status" className="mt-8 border-l-4 border-emerald-600 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-                            결제가 승인되었습니다.
+                            결제가 승인되었습니다. <Link to="/organization" className="ml-2 font-semibold underline">조합 관리로 이동</Link>
                         </div>
                     )}
                     {paymentStatus === 'cancel' && (

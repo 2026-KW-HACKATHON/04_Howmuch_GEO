@@ -1,13 +1,17 @@
+import secrets
 from fastapi import APIRouter, status, Depends, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import select, or_
 from app.database.database_connection import get_db
 from app.models.user import User
+from app.models.account import AccountProfile, Organization
 from app.auth.encrypt import password_manager
 from app.schemas.user.user_request import UserSignUpRequest, UserLoginRequest
 from app.schemas.user.user_response import UserSignUpResponse
-from app.exceptions.exceptions_handler import ConflictException, UnauthorizedException
+from app.exceptions.exceptions_handler import BadRequestException, ConflictException, UnauthorizedException
 from app.services.credit_service import get_daily_credits, reset_daily_credits
+from app.services.plan_service import get_plan
+from app.services.organization_service import get_active_organization, get_account_type, has_unlimited_credits
 
 #User 라우터
 router = APIRouter(
@@ -22,6 +26,16 @@ router = APIRouter(
     response_model = UserSignUpResponse
 )
 def signup_user_handler(body: UserSignUpRequest, session: Session = Depends(get_db)):
+
+    plan = None
+
+    #계정 종류가 조합장이라면 Plan 조회
+    if body.account_type == "leader":
+        plan = get_plan(body.plan_code or "")
+        if plan is None:
+            raise BadRequestException("조합장 가입에는 유효한 플랜 선택이 필요합니다.")
+    elif body.plan_code:
+        raise BadRequestException("개인 계정에는 조합장 플랜을 선택할 수 없습니다.")
 
     #같은 아이디 혹은 이메일이 있는지 확인
     user = session.execute(
@@ -52,10 +66,30 @@ def signup_user_handler(body: UserSignUpRequest, session: Session = Depends(get_
     )
 
     session.add(user)
-    session.commit()
-    session.refresh(user)
+    session.flush()
 
-    return user
+    session.add(AccountProfile(user_id=user.user_id, account_type=body.account_type))
+
+    #플랜이 존재한다면 초대코드 난수 생성 후 Organization DB 에 정보 저장
+    if plan:
+        invitation_code = secrets.token_urlsafe(9).replace("-", "").replace("_", "").upper()[:12]
+        session.add(Organization(
+            leader_user_id=user.user_id,
+            plan_code=plan.code,
+            invitation_code=invitation_code,
+            status="pending_payment",
+            max_members=plan.max_members,
+        ))
+    session.commit()
+
+    #정보 반환
+    return {
+        "user_id": user.user_id,
+        "user_name": user.user_name,
+        "email": user.email,
+        "account_type": body.account_type,
+        "plan_code": plan.code if plan else None,
+    }
 
 #로그인 API 엔드포인트
 @router.post(
@@ -67,7 +101,10 @@ def login_user_handler(request:Request, body: UserLoginRequest, session: Session
     #사용자 이름으로 사용자 조회
     user = session.execute(
         select(User).where(
-            User.user_name == body.user_name
+            or_(
+                User.user_name == body.user_name,
+                User.email == body.user_name,
+            )
         )
     ).scalar_one_or_none()
 
@@ -91,6 +128,7 @@ def login_user_handler(request:Request, body: UserLoginRequest, session: Session
         session.commit()
 
     #로그인 성공 시 세션에 사용자 ID 저장
+    request.session.clear()
     request.session["user_id"] = user.user_id
     return {"message": "로그인에 성공했습니다."}
 
@@ -136,7 +174,8 @@ def get_user_info_handler(request: Request, session: Session = Depends(get_db)):
     return {
         "user_id": user.user_id,
         "user_name": user.user_name,
-        "email": user.email
+        "email": user.email,
+        "account_type": get_account_type(session, user.user_id),
     }
 
 #사용자 크레딧 조회 API 엔드포인트
@@ -144,21 +183,43 @@ def get_user_info_handler(request: Request, session: Session = Depends(get_db)):
     "/user/credits",
     status_code=status.HTTP_200_OK,
 )
-async def get_user_credits_handler(request: Request):
+async def get_user_credits_handler(request: Request, session: Session = Depends(get_db)):
+
+    #로그인된 사용자 ID 조회
     user_id = request.session.get("user_id")
     if user_id is None:
         raise UnauthorizedException("로그인이 필요합니다.")
+    user_id = int(user_id)
 
-    return await get_daily_credits(int(user_id))
+    #사용자가 조합에 가입되어 무제한 크레딧이 제공된다면 무한 제공값으로 반환
+    if has_unlimited_credits(session, user_id):
+        organization = get_active_organization(session, user_id)
+        return {
+            "credits_remaining": -1,
+            "daily_credit_limit": -1,
+            "resets_at": organization.paid_until.isoformat(),
+            "unlimited": True,
+        }
+
+    #개인 사용자라면 잔여 기본 크레딧 반환
+    result = await get_daily_credits(user_id)
+    return {**result, "unlimited": False}
 
 #사용자 크레딧 초기화 API 엔드포인트
 @router.post(
     "/user/credits/reset",
     status_code=status.HTTP_200_OK,
 )
-async def reset_user_credits_handler(request: Request):
+async def reset_user_credits_handler(request: Request, session: Session = Depends(get_db)):
+
+    #로그인된 사용자 ID 확인
     user_id = request.session.get("user_id")
     if user_id is None:
         raise UnauthorizedException("로그인이 필요합니다.")
 
-    return await reset_daily_credits(int(user_id))
+    #사용자가 조합 소속이라 무제한 크레딧이 가능한 상황이라면 크레딧 충전 실패 반환
+    if has_unlimited_credits(session, int(user_id)):
+        raise BadRequestException("활성 조합 플랜 이용자는 크레딧 충전이 필요하지 않습니다.")
+
+    #무소속 개인 계정이라면 크레딧 초기화
+    return {**(await reset_daily_credits(int(user_id))), "unlimited": False}

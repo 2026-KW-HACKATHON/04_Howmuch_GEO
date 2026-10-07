@@ -1,12 +1,15 @@
 import { api } from './client';
 
+//결제 요청 인터페이스
 export interface PaymentRequest {
     item_name: string
     quantity: number
     price: number
     tax_free_amount: number
+    plan_code?: 'Standard' | 'Pro' | 'Premium'
 }
 
+//결제 응답 인터페이스
 export interface PaymentReadyResponse {
     next_redirect_pc_url: string
     tid: string

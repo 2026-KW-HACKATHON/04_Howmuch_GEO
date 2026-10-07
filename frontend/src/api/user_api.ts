@@ -1,9 +1,11 @@
 import { api } from './client';
 
+//일일 크레딧 인터페이스 스키마
 export interface DailyCredits {
     credits_remaining: number;
     daily_credit_limit: number;
     resets_at: string;
+    unlimited?: boolean;
 }
 
 //사용자 회원가입 요청 스키마
@@ -11,6 +13,8 @@ export interface SignupRequest {
     email: string;
     user_name: string;
     password: string;
+    account_type: 'personal' | 'leader';
+    plan_code?: 'Standard' | 'Pro' | 'Premium';
 }
 
 //사용자 로그인 요청 스키마

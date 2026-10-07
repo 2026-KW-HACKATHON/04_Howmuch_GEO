@@ -21,8 +21,9 @@ export default function LoginPage() {
             <p className="text-gray-600 mb-8">서비스를 이용하기 위해서는 로그인이 필요합니다.</p>
             <form className="flex flex-col items-center w-80">
                 <input
-                    type="email"
-                    placeholder="아이디"
+                    type="text"
+                    autoComplete="username"
+                    placeholder="아이디 또는 이메일"
                     onChange={(e)=>setUserName(e.target.value)}
                     className={`mb-4 w-full rounded-lg border border-gray-300 px-4 py-2 ${
                         loginAttempted ? 'border-red-500' : 'focus:border-blue-500'} focus:outline-none`}

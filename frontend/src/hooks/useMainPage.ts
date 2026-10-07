@@ -2,7 +2,7 @@ import { getVWorldCadastral } from '../api/cadastral_api';
 import { getZoneInfo, getContributionInfo } from '../api/realestate_api';
 import { ParcelInfo } from '../utils/parcel';
 import { useCallback, useState, useEffect } from 'react';
-import { userLogout, userInfo, userCredits } from '../api/user_api';
+import { userLogout, userInfo, userCredits, resetUserCredits } from '../api/user_api';
 import axios from 'axios';
 
 //MainPage Hook
@@ -13,6 +13,7 @@ export const useMainPage = () => {
 
     const [userName, setUserName] = useState<string>('');
     const [userEmail, setUserEmail] = useState<string>('');
+    const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
     const [dailyCredits, setDailyCredits] = useState<number | null>(null);
     const [creditsUnavailable, setCreditsUnavailable] = useState<boolean>(false);
     const [creditsResetAt, setCreditsResetAt] = useState<string | null>(null);
@@ -26,6 +27,7 @@ export const useMainPage = () => {
         try {
             const response = await userInfo();
             if (response && response.user_name && response.email) {
+                setIsAuthenticated(true);
                 setUserName(response.user_name);
                 setUserEmail(response.email);
                 const credits = await userCredits();
@@ -33,13 +35,16 @@ export const useMainPage = () => {
                 setCreditsResetAt(credits.resets_at);
                 setCreditsUnavailable(false);
             } else {
-                alert("계정 정보에 오류가 생겼습니다. 다시 로그인해주세요.");
-                window.location.href = "/login";
+                setIsAuthenticated(false);
+                setDailyCredits(null);
             }
         } catch (err: any) {
             if (err.response && err.response.status === 401) {
-                alert("로그인이 필요합니다.");
-                window.location.href = "/login";
+                setIsAuthenticated(false);
+                setUserName('');
+                setUserEmail('');
+                setDailyCredits(null);
+                setCreditsUnavailable(false);
             } else {
                 setCreditsUnavailable(true);
                 console.error("[ 크레딧 조회 오류 발생 ] : ", err);
@@ -51,6 +56,30 @@ export const useMainPage = () => {
     useEffect(() => {
         void checkLoginStatus();
     }, [checkLoginStatus]);
+
+    useEffect(() => {
+        if (!isAuthenticated) return;
+
+        const refreshCredits = async () => {
+            if (document.visibilityState !== 'visible') return;
+            try {
+                const credits = await userCredits();
+                setDailyCredits(credits.credits_remaining);
+                setCreditsResetAt(credits.resets_at);
+                setCreditsUnavailable(false);
+            } catch (err) {
+                setCreditsUnavailable(true);
+                console.error('[ 크레딧 새로고침 오류 발생 ] : ', err);
+            }
+        };
+
+        window.addEventListener('focus', refreshCredits);
+        document.addEventListener('visibilitychange', refreshCredits);
+        return () => {
+            window.removeEventListener('focus', refreshCredits);
+            document.removeEventListener('visibilitychange', refreshCredits);
+        };
+    }, [isAuthenticated]);
 
     //페이지를 열어둔 채 날짜가 바뀌어도 일일 크레딧 잔액을 갱신
     useEffect(() => {
@@ -77,10 +106,26 @@ export const useMainPage = () => {
         try {
             await userLogout();
             alert("정상적으로 로그아웃 되었습니다.");
-            window.location.href = "/login";
+            window.location.href = "/";
         } catch (err) {
             console.error("[ logoutButtonAction 오류 발생 ] : ", err);
             alert("로그아웃 중 오류가 발생했습니다. 다시 시도해주세요.");
+        }
+    }
+
+    const resetPersonalCredits = async () => {
+        if (!window.confirm('오늘 사용할 개인 크레딧을 5개로 초기화할까요?')) return;
+        setResettingCredits(true);
+        try {
+            const credits = await resetUserCredits();
+            setDailyCredits(credits.credits_remaining);
+            setCreditsResetAt(credits.resets_at);
+            setCreditsUnavailable(false);
+        } catch (err) {
+            console.error('[ 크레딧 초기화 오류 발생 ] : ', err);
+            alert('크레딧 초기화에 실패했습니다. 잠시 후 다시 시도해주세요.');
+        } finally {
+            setResettingCredits(false);
         }
     }
 
@@ -163,6 +208,7 @@ export const useMainPage = () => {
 
     return {
         isOpen,
+        isAuthenticated,
         isVerified,
         selectedPnus,
         selectedParcels,
@@ -178,6 +224,7 @@ export const useMainPage = () => {
         dailyCredits,
         creditsUnavailable,
         resettingCredits,
+        resetPersonalCredits,
         toggleResetCredit,
         kakaoPayPopUpOn
     };
