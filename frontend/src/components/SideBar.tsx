@@ -23,11 +23,13 @@ const SideBar: React.FC<SideBarProps> = ({ isOpen, onToggleSidebar, activePanel,
             >
 
                 {/* 사이드바 제목 영역 */}
-                <div className="text-xl font-extrabold mb-6 px-2 whitespace-nowrap text-slate-900 flex items-center gap-2">
-                    <Link to="/main" className="text-lg font-bold tracking-tight text-slate-900">
-                    얼마 <span className="font-medium text-emerald-700">GEO</span>
-                    </Link>
-                </div>
+                <Link to="/main" className="flex w-full items-center justify-center">
+                    <img
+                        src="/banner.png"
+                        alt="얼마 GEO 배너"
+                        className="h-24 w-auto object-contain sm:h-28"
+                    />
+                </Link>
 
                 <div role="tablist" aria-label="사이드바 패널 선택" className="mb-4 grid grid-cols-2 rounded-lg bg-slate-100 p-1">
                     <button
