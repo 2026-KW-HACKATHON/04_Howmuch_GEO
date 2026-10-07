@@ -13,9 +13,9 @@ class Plan:
 
 #Plan 종류
 PLANS = {
-    "Standard": Plan("Standard", "Standard", 10, 1, 10000),
-    "Pro": Plan("Pro", "Pro", 30, 6, 50000),
-    "Premium": Plan("Premium", "Premium", 50, 12, 100000),
+    "Standard": Plan("Standard", "Standard", 100, 1, 10000),
+    "Pro": Plan("Pro", "Pro", 1000, 6, 50000),
+    "Premium": Plan("Premium", "Premium", 2000, 12, 100000),
 }
 
 #Plan 조회 함수

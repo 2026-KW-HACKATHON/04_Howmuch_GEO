@@ -76,9 +76,9 @@ export default function SignupPage() {
                     <fieldset disabled={accountType !== 'leader'} className="w-full">
                         <div className="grid grid-cols-1 gap-4 md:grid-cols-3 ">
                             {[
-                                { code: 'Standard', detail: '최대 10명 · 1개월 · ₩10,000' },
-                                { code: 'Pro', detail: '최대 30명 · 6개월 · ₩50,000' },
-                                { code: 'Premium', detail: '최대 50명 · 12개월 · ₩100,000' },
+                                { code: 'Standard', detail: '최대 100명 · 1개월 · ₩10,000' },
+                                { code: 'Pro', detail: '최대 1000명 · 6개월 · ₩50,000' },
+                                { code: 'Premium', detail: '최대 2000명 · 12개월 · ₩100,000' },
                             ].map((plan) => {
                                 const isSelected = planCode === plan.code;
                                 return (
