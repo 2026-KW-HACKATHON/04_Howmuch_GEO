@@ -42,7 +42,7 @@ export const useSignupPage = () => {
             navigate("/login");
 
         } catch(err : any) {
-            if(err.response.status === 409) {
+            if(err && err.response.status === 409) {
                 alert("이미 존재하는 이메일 혹은 아이디입니다.");
                 return;
             } else {

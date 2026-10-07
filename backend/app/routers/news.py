@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 KAKAO_API_KEY = os.getenv("KAKAO_API_KEY")
 
 if not KAKAO_API_KEY:
-    raise BadRequestException("VWORLD_API_KEY 환경 변수가 설정되지 않았습니다.")
+    raise BadRequestException("KAKAO_API_KEY 환경 변수가 설정되지 않았습니다.")
 
 
 @router.post(

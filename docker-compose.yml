@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
 
@@ -42,7 +42,6 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
-    network_mode: "host"
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "how-much-geo-test.vercel.app:216.198.79.67"
