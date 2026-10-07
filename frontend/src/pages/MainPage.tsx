@@ -34,8 +34,6 @@ export default function MainPage() {
         userEmail,
         dailyCredits,
         creditsUnavailable,
-        resettingCredits,
-        resetPersonalCredits,
     } = useMainPage();
 
     //프로필 메뉴 외부 클릭 시 닫기 및 ESC 키로 닫기
@@ -92,7 +90,7 @@ export default function MainPage() {
                             <p className="mt-1 text-sm text-slate-500">{userName}</p>
                             <p className="text-xs text-slate-400">{userEmail}</p>
                             <p className="mt-3 text-sm font-medium text-slate-700">
-                                {dailyCredits === -1 ? '조합 무제한 크레딧' : `오늘 크레딧 ${dailyCredits ?? '-'} / 5`}
+                                {dailyCredits === -1 ? '조합 무제한 크레딧' : `사용 가능 크레딧 ${dailyCredits ?? '-'}`}
                             </p>
                         </div> : <div className="border-b border-slate-100 px-4 py-4">
                             <p className="font-semibold text-slate-900">로그인이 필요합니다</p>
@@ -107,14 +105,13 @@ export default function MainPage() {
                             <Link to="/login" onClick={() => setIsProfileOpen(false)} className="block w-full border-b border-slate-100 px-4 py-3 text-left text-sm font-medium text-blue-700 transition hover:bg-blue-50">로그인</Link>
                             <Link to="/signup" onClick={() => setIsProfileOpen(false)} className="block w-full px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50">회원가입</Link>
                         </>}
-                        {isAuthenticated && dailyCredits !== -1 && <button
-                            type="button"
-                            onClick={() => void resetPersonalCredits()}
-                            disabled={resettingCredits || creditsUnavailable || dailyCredits === null}
-                            className="w-full border-b border-slate-100 px-4 py-3 text-left text-sm font-medium text-blue-700 transition hover:bg-blue-50 disabled:cursor-not-allowed disabled:opacity-50"
+                        {isAuthenticated && dailyCredits !== -1 && <Link
+                            to="/credits/payment"
+                            onClick={() => setIsProfileOpen(false)}
+                            className="block w-full border-b border-slate-100 px-4 py-3 text-left text-sm font-medium text-blue-700 transition hover:bg-blue-50"
                         >
-                            {resettingCredits ? '충전 중...' : '일일 크레딧 충전'}
-                        </button>}
+                            크레딧 구매 · 5회 ₩500
+                        </Link>}
                         {isAuthenticated && <button
                             type="button"
                             onClick={logoutButtonAction}

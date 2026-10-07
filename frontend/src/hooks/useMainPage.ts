@@ -2,7 +2,7 @@ import { getVWorldCadastral } from '../api/cadastral_api';
 import { getZoneInfo, getContributionInfo } from '../api/realestate_api';
 import { ParcelInfo } from '../utils/parcel';
 import { useCallback, useState, useEffect } from 'react';
-import { userLogout, userInfo, userCredits, resetUserCredits } from '../api/user_api';
+import { userLogout, userInfo, userCredits } from '../api/user_api';
 import axios from 'axios';
 
 //MainPage Hook
@@ -17,7 +17,6 @@ export const useMainPage = () => {
     const [dailyCredits, setDailyCredits] = useState<number | null>(null);
     const [creditsUnavailable, setCreditsUnavailable] = useState<boolean>(false);
     const [creditsResetAt, setCreditsResetAt] = useState<string | null>(null);
-    const [resettingCredits, setResettingCredits] = useState<boolean>(false);
     const [kakaoPayPopUpOn, setKakaoPayPopUpOn] = useState<boolean>(false);
     //선택 필지의 면적·공시지가 (지적도 응답에서 뽑은 값)
     const [selectedParcels, setSelectedParcels] = useState<ParcelInfo[]>([]);
@@ -113,23 +112,6 @@ export const useMainPage = () => {
         }
     }
 
-    const resetPersonalCredits = async () => {
-        if (!window.confirm('오늘 사용할 개인 크레딧을 5개로 초기화할까요?')) return;
-        setResettingCredits(true);
-        try {
-            const credits = await resetUserCredits();
-            setDailyCredits(credits.credits_remaining);
-            setCreditsResetAt(credits.resets_at);
-            setCreditsUnavailable(false);
-        } catch (err) {
-            console.error('[ 크레딧 초기화 오류 발생 ] : ', err);
-            alert('크레딧 초기화에 실패했습니다. 잠시 후 다시 시도해주세요.');
-        } finally {
-            setResettingCredits(false);
-        }
-    }
-
-
     //선택 필지 갱신 Handler
     //  같은 필지 목록이면 상태를 그대로 둔다. 매번 새 배열을 넣으면 렌더가 무한히 반복된다
     const handleSelectionChange = useCallback((pnus: string[], parcels: ParcelInfo[]) => {
@@ -223,8 +205,6 @@ export const useMainPage = () => {
         userEmail,
         dailyCredits,
         creditsUnavailable,
-        resettingCredits,
-        resetPersonalCredits,
         toggleResetCredit,
         kakaoPayPopUpOn
     };

@@ -11,7 +11,6 @@ import {
     type OrganizationMember,
     type OrganizationOverview,
 } from '../api/organization_api';
-import { resetUserCredits } from '../api/user_api';
 
 export default function OrganizationPage() {
     const [overview, setOverview] = useState<OrganizationOverview | null>(null);
@@ -21,7 +20,6 @@ export default function OrganizationPage() {
     const [isSaving, setIsSaving] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
     const [notice, setNotice] = useState('');
-    const [isResettingCredits, setIsResettingCredits] = useState(false);
 
     const loadPage = async () => {
         setIsLoading(true);
@@ -60,22 +58,6 @@ export default function OrganizationPage() {
             setErrorMessage('가입 신청을 처리하지 못했습니다. 코드를 확인하고 다시 시도해주세요.');
         } finally {
             setIsSaving(false);
-        }
-    };
-
-    const resetCredits = async () => {
-        if (!window.confirm('오늘 사용할 개인 크레딧을 5개로 초기화할까요?')) return;
-        setIsResettingCredits(true);
-        setErrorMessage('');
-        setNotice('');
-        try {
-            await resetUserCredits();
-            setNotice('오늘 사용할 크레딧 5개를 준비했습니다.');
-        } catch (error) {
-            console.error('[ Credit reset error ]', error);
-            setErrorMessage('크레딧을 초기화하지 못했습니다. 이미 조합 플랜을 이용 중이거나 잠시 후 다시 시도해주세요.');
-        } finally {
-            setIsResettingCredits(false);
         }
     };
 
@@ -155,9 +137,9 @@ export default function OrganizationPage() {
                                 <p className="text-sm font-semibold">개인 크레딧</p>
                                 <p className="mt-1 text-sm text-slate-500">일일 기본 크레딧을 다시 준비합니다.</p>
                             </div>
-                            <button type="button" disabled={isResettingCredits} onClick={() => void resetCredits()} className="min-h-10 border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-                                {isResettingCredits ? '처리 중...' : '크레딧 충전'}
-                            </button>
+                            <Link to="/credits/payment" className="flex min-h-10 items-center justify-center border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                                5회 구매 · ₩500
+                            </Link>
                         </div>
                     </section>
                 )}

@@ -9,7 +9,7 @@ from app.auth.encrypt import password_manager
 from app.schemas.user.user_request import UserSignUpRequest, UserLoginRequest
 from app.schemas.user.user_response import UserSignUpResponse
 from app.exceptions.exceptions_handler import BadRequestException, ConflictException, UnauthorizedException
-from app.services.credit_service import get_daily_credits, reset_daily_credits
+from app.services.credit_service import get_daily_credits
 from app.services.plan_service import get_plan
 from app.services.organization_service import get_active_organization, get_account_type, has_unlimited_credits
 
@@ -196,6 +196,8 @@ async def get_user_credits_handler(request: Request, session: Session = Depends(
         organization = get_active_organization(session, user_id)
         return {
             "credits_remaining": -1,
+            "daily_credits_remaining": -1,
+            "purchased_credits": 0,
             "daily_credit_limit": -1,
             "resets_at": organization.paid_until.isoformat(),
             "unlimited": True,
@@ -221,5 +223,4 @@ async def reset_user_credits_handler(request: Request, session: Session = Depend
     if has_unlimited_credits(session, int(user_id)):
         raise BadRequestException("활성 조합 플랜 이용자는 크레딧 충전이 필요하지 않습니다.")
 
-    #무소속 개인 계정이라면 크레딧 초기화
-    return {**(await reset_daily_credits(int(user_id))), "unlimited": False}
+    raise BadRequestException("크레딧은 결제 승인 후 충전됩니다. 크레딧 구매 화면을 이용해 주세요.")

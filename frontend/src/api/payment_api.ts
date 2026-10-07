@@ -15,6 +15,11 @@ export interface PaymentReadyResponse {
     tid: string
 }
 
+export async function postCreditPurchase(): Promise<PaymentReadyResponse> {
+    const response = await api.post('/api/v1/kakao-pay/credits/ready');
+    return response.data;
+}
+
 //결제 요청 API HTTP Handler
 export async function postPayment(paymentRequest: PaymentRequest): Promise<PaymentReadyResponse> {
     const response = await api.post('/api/v1/kakao-pay/ready', paymentRequest);
