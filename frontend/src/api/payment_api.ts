@@ -1,0 +1,19 @@
+import { api } from './client';
+
+export interface PaymentRequest {
+    item_name: string
+    quantity: number
+    price: number
+    tax_free_amount: number
+}
+
+export interface PaymentReadyResponse {
+    next_redirect_pc_url: string
+    tid: string
+}
+
+//결제 요청 API HTTP Handler
+export async function postPayment(paymentRequest: PaymentRequest): Promise<PaymentReadyResponse> {
+    const response = await api.post('/api/v1/kakao-pay/ready', paymentRequest);
+    return response.data;
+}

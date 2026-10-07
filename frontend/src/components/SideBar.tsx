@@ -1,4 +1,5 @@
 import React, { ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 
 //SideBar Props
 interface SideBarProps {
@@ -23,7 +24,9 @@ const SideBar: React.FC<SideBarProps> = ({ isOpen, onToggleSidebar, activePanel,
 
                 {/* 사이드바 제목 영역 */}
                 <div className="text-xl font-extrabold mb-6 px-2 whitespace-nowrap text-slate-900 flex items-center gap-2">
-                    <span>얼마 Geo</span>
+                    <Link to="/main" className="text-lg font-bold tracking-tight text-slate-900">
+                    얼마 <span className="font-medium text-emerald-700">GEO</span>
+                    </Link>
                 </div>
 
                 <div role="tablist" aria-label="사이드바 패널 선택" className="mb-4 grid grid-cols-2 rounded-lg bg-slate-100 p-1">

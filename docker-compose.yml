@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
 
@@ -37,12 +37,11 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app/backend
+      - ./backend:/app
       - ./AI:/app/AI
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
-    network_mode: "host"
     extra_hosts:
       - "host.docker.internal:host-gateway"
       - "how-much-geo-test.vercel.app:216.198.79.67"
@@ -65,6 +64,7 @@ services:
       - /app/node_modules
     environment:
       - VITE_VWORLD_WFS_URL=/vworld-api/req/wfs
+      - VITE_API_BASE_URL=http://localhost:8000
       - CHOKIDAR_USEPOLLING=true
     dns:
       - 8.8.8.8
