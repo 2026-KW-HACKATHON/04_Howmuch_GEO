@@ -56,7 +56,7 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
         && !loading
         && !creditsUnavailable
         && dailyCredits !== null
-        && dailyCredits > 0;
+        && (dailyCredits === -1 || dailyCredits > 0);
 
     //조합원 수는 슬라이더 값을 쓰고, 아직 없으면 폼 기본값을 쓴다
     const memberCount = Number(sliderData.member_count?.value ?? formData.member_count);
@@ -118,7 +118,9 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
                         : creditsUnavailable
                             ? '크레딧 정보를 불러올 수 없습니다'
                         : dailyCredits === null
-                            ? '크레딧 확인 중...'
+                            ? '현재 사용할 수 없습니다'
+                        : dailyCredits === -1
+                            ? '분담금 계산 · 무제한 크레딧'
                         : dailyCredits <= 0
                             ? '오늘의 크레딧을 모두 사용했습니다'
                         : selectedPnus.length === 0
