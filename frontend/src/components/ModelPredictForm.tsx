@@ -118,7 +118,7 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
                         : creditsUnavailable
                             ? '크레딧 정보를 불러올 수 없습니다'
                         : dailyCredits === null
-                            ? '크레딧 확인 중...'
+                            ? '현재 사용할 수 없습니다'
                         : dailyCredits === -1
                             ? '분담금 계산 · 무제한 크레딧'
                         : dailyCredits <= 0

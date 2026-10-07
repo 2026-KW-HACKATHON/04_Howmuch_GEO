@@ -277,7 +277,7 @@ async def kakao_pay_approve(
     #partner_order_id 에 해당하는 order 조회
     order = session.execute(
         select(PaymentOrder).where(
-            aymentOrder.partner_order_id == partner_order_id
+            PaymentOrder.partner_order_id == partner_order_id
         )
     ).scalar_one_or_none()
 
