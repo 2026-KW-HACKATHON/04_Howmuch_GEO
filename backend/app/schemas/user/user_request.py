@@ -27,6 +27,6 @@ class UserLoginRequest(BaseModel):
     user_name: str = Field(..., description="아이디")
     password: str = Field(..., min_length=5, description="비밀번호 입력")
 
-
+#조직 가입 요청 스키마
 class JoinOrganizationRequest(BaseModel):
     invitation_code: str = Field(..., min_length=4, max_length=32)

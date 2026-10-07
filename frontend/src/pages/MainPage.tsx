@@ -12,7 +12,7 @@ import { Link } from 'react-router-dom';
 //메인 페이지
 export default function MainPage() {
     const [isProfileOpen, setIsProfileOpen] = useState(false);
-    const [activePanel, setActivePanel] = useState<'news' | 'prediction'>('news');
+    const [activePanel, setActivePanel] = useState<'news' | 'prediction'>('prediction');
     const [regionName, setRegionName] = useState('');
     const profileRef = useRef<HTMLDivElement>(null);
     

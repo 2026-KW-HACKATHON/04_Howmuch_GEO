@@ -47,22 +47,33 @@ if not BACKEND_URL:
 #결제 API 엔드포인트
 @router.post("/kakao-pay/ready")
 async def kakao_pay_ready(body: PaymentRequest, request: Request, session: Session = Depends(get_db)):
+
+    #로그인된 사용자인지 확인
     user_id = request.session.get("user_id")
     if user_id is None:
         raise UnauthorizedException("로그인이 필요합니다.")
 
+    #사용자가 조합장인 조합 조회
     organization = session.execute(
-        select(Organization).where(Organization.leader_user_id == int(user_id))
+        select(Organization).where(
+            Organization.leader_user_id == int(user_id)
+        )
     ).scalar_one_or_none()
+
+    #사용자가 조합장인 조직이 없거나 결제 불가상태라면 Bad Request Exception 발생
     if not organization:
         raise BadRequestException("조합장 플랜 결제는 조합장 계정만 할 수 있습니다.")
     if organization.status not in {"pending_payment", "active"}:
         raise BadRequestException("현재 결제할 수 없는 조합 상태입니다.")
 
+    #조합의 플랜 코드 반환
     plan = get_plan(organization.plan_code)
+
+    #플랜코드가 없다면 Bad Request Exception 발생
     if not plan:
         raise BadRequestException("유효하지 않은 조합 플랜입니다.")
 
+    #플랜에 대하여 결제 요청 준비
     logger.warning("[ Log ] : 결제 준비 API 시도중.")
     url = f"{KAKAO_PAYMENT_BASE_URL}/ready"
     partner_order_id = secrets.token_urlsafe(24)
@@ -85,13 +96,16 @@ async def kakao_pay_ready(body: PaymentRequest, request: Request, session: Sessi
         "fail_url": f"{BACKEND_URL}/api/v1/kakao-pay/fail?partner_order_id={partner_order_id}"
     }
 
+    #비동기 결제 요청
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, json=payload)
 
+    #요청 실패시 Service Unavailable Exception 발생
     if response.status_code != 200:
         logger.warning("[ Log ] : 결제 준비 API 호출 실패.")
         raise ServiceUnavailableException(response.json())
     
+    #반환 결과 PaymentOrder DB 에 저장 및 반환
     result = response.json()
 
     session.add(PaymentOrder(
@@ -109,15 +123,11 @@ async def kakao_pay_ready(body: PaymentRequest, request: Request, session: Sessi
 #크레딧 충전 API 엔드포인트
 @router.post("/kakao-pay/credits/ready")
 async def kakao_credit_purchase_ready(request: Request, session: Session = Depends(get_db)):
-
-    #로그인된 사용자인지 확인
     user_id = request.session.get("user_id")
     if user_id is None:
         raise UnauthorizedException("로그인이 필요합니다.")
 
     user_id = int(user_id)
-
-    #조직에 가입되어 크레딧 소모가 필요없는 상황인지 확인
     if has_unlimited_credits(session, user_id):
         raise BadRequestException("조합 플랜 이용자는 개인 크레딧을 구매할 필요가 없습니다.")
 
@@ -140,22 +150,17 @@ async def kakao_credit_purchase_ready(request: Request, session: Session = Depen
         "Content-Type": "application/json",
     }
 
-    #비동기 Kakaopay 요청
     async with httpx.AsyncClient() as client:
         response = await client.post(f"{KAKAO_PAYMENT_BASE_URL}/ready", headers=headers, json=payload)
 
-    #실패시 Service Unavailable Exception 반환
     if response.status_code != 200:
         logger.warning("KakaoPay credit ready failed: %s", response.text)
         raise ServiceUnavailableException("크레딧 결제를 시작하지 못했습니다.")
 
     result = response.json()
-
-    #정상적인 반환이 아닐 경우 Service Unavailable Exception 반환
     if not result.get("tid") or not result.get("next_redirect_pc_url"):
         raise ServiceUnavailableException("카카오페이 결제 준비 응답이 올바르지 않습니다.")
 
-    #세션 반영
     session.add(CreditPurchaseOrder(
         partner_order_id=partner_order_id,
         user_id=user_id,
@@ -166,7 +171,6 @@ async def kakao_credit_purchase_ready(request: Request, session: Session = Depen
     ))
     session.commit()
 
-    #결과 반환
     return {
         "next_redirect_pc_url": result["next_redirect_pc_url"],
         "tid": result["tid"],
@@ -182,14 +186,12 @@ async def kakao_credit_purchase_approve(
     partner_order_id: str = Query(...),
     session: Session = Depends(get_db),
 ):
-    #parter_order_id 를 통한 order 정보 조회
     order = session.execute(
         select(CreditPurchaseOrder)
         .where(CreditPurchaseOrder.partner_order_id == partner_order_id)
         .with_for_update()
     ).scalar_one_or_none()
 
-    #없다면 Bad Request Exception 반환
     if not order or not order.tid or order.status != "ready":
         raise BadRequestException("유효한 크레딧 결제 주문을 찾을 수 없습니다.")
 
@@ -205,19 +207,15 @@ async def kakao_credit_purchase_approve(
         "pg_token": pg_token,
     }
 
-    #비동기 호출
     async with httpx.AsyncClient() as client:
         response = await client.post(f"{KAKAO_PAYMENT_BASE_URL}/approve", headers=headers, json=payload)
 
-    #실패시 Service Unavailable Exception 반환
     if response.status_code != 200:
         logger.warning("[ Log ] : KakaoPay 크레딧 승인 실패 : %s", response.text)
         raise ServiceUnavailableException("카카오페이 결제가 승인되지 않았습니다.")
 
     approval = response.json()
     paid_total = (approval.get("amount") or {}).get("total")
-
-    #정상적인 응답이 아닐시 Service Unavailable Exception 발생
     if (
         approval.get("tid") != order.tid
         or approval.get("partner_order_id") != order.partner_order_id
@@ -230,7 +228,6 @@ async def kakao_credit_purchase_approve(
     order.status = "approved"
     session.commit()
 
-    #결과 반환
     return RedirectResponse(
         url=f"{os.getenv('FRONTEND_URL')}/credits/payment?status=success&credits={order.credit_amount}",
         status_code=303,
@@ -248,17 +245,12 @@ def kakao_credit_purchase_fail(partner_order_id: str = Query(...), session: Sess
     _update_credit_purchase_status(session, partner_order_id, "failed")
     return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/credits/payment?status=fail", status_code=303)
 
-#크레딧 구매 상태 업데이트 함수
 def _update_credit_purchase_status(session: Session, partner_order_id: str, new_status: str) -> None:
-
-    #partner_order_id 에 해당하는 order 조회
     order = session.execute(
         select(CreditPurchaseOrder).where(
             CreditPurchaseOrder.partner_order_id == partner_order_id
         )
     ).scalar_one_or_none()
-
-    #order 의 상태가 준비상태라면 order 의 상태를 새로운 상태로 업데이트 및 반영
     if order and order.status == "ready":
         order.status = new_status
         session.commit()
@@ -272,30 +264,30 @@ async def kakao_pay_approve(
     partner_order_id: str = Query(...),
     session: Session = Depends(get_db),
 ):
+    #Partner Order ID 로 정보 조회
     logger.warning("[ Log ] : 결제 승인 API 시도중.")
-
-    #partner_order_id 에 해당하는 order 조회
     order = session.execute(
         select(PaymentOrder).where(
             PaymentOrder.partner_order_id == partner_order_id
         )
     ).scalar_one_or_none()
 
-    #order 가 존재하지 않는다면 Service Unavailable Exception 발생
+    #정보다 없다면 Service Unavailable Exception 발생
     if not order or not order.tid or order.status != "ready":
         logger.warning("[ Log ] : 결제 승인 API 실패.")
         raise ServiceUnavailableException("결제 준비 정보(tid)를 찾을 수 없습니다.")
 
-    #order 의 정보로 조직 조회
+    #정보의 조직 id 로 조직 조회
     organization = session.get(Organization, order.organization_id)
 
-    #조직의 plan 조회
+    #플랜 코드 조회
     plan = get_plan(order.plan_code)
 
-    #조직이나 plan 이 존재하지 않는다면 Service Unavailable Exception 발생
+    #조직 정보나 플랜 코드가 없다면 Service Unavailable Exception 발생
     if not organization or not plan:
         raise ServiceUnavailableException("결제할 조합 플랜 정보를 찾을 수 없습니다.")
 
+    #요청 준비
     url = f"{KAKAO_PAYMENT_BASE_URL}/approve"
 
     headers = {
@@ -311,7 +303,7 @@ async def kakao_pay_approve(
         "pg_token": pg_token
     }
 
-    #비동기 호출부
+    #비동기 요청
     async with httpx.AsyncClient() as client:
         response = await client.post(url, headers=headers, json=payload)
 
@@ -320,6 +312,7 @@ async def kakao_pay_approve(
         logger.warning("[ Log ] : 결제 승인 API 실패.")
         raise ServiceUnavailableException(response.json())
 
+    #결제 최종 승인시 정보 저장 및 페이지 Redirect
     now = datetime.now(timezone.utc)
     start = organization.paid_until if organization.paid_until and organization.paid_until > now else now
     organization.paid_until = add_plan_duration(start, plan.duration_months)
@@ -343,13 +336,21 @@ def kakao_pay_fail(partner_order_id: str | None = Query(default=None), session: 
     _update_payment_status(session, partner_order_id, "failed")
     return RedirectResponse(url=f"{os.getenv('FRONTEND_URL')}/payment?status=fail", status_code=303)
 
-
+#결제 정보 업데이트 함수
 def _update_payment_status(session: Session, partner_order_id: str | None, new_status: str) -> None:
+
+    #Partner Order ID 가 존재하지 않는다면 반환
     if not partner_order_id:
         return
+    
+    #PaymentOrder 데이터베이스에서 해당하는 주문정보 조회
     order = session.execute(
-        select(PaymentOrder).where(PaymentOrder.partner_order_id == partner_order_id)
+        select(PaymentOrder).where(
+            PaymentOrder.partner_order_id == partner_order_id
+        )
     ).scalar_one_or_none()
+
+    #상태 전환 및 저장
     if order and order.status == "ready":
         order.status = new_status
         session.commit()

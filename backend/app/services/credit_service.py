@@ -6,7 +6,6 @@ import logging
 import secrets
 from zoneinfo import ZoneInfo
 
-
 #일일 사용 가능한 크레딧 수 제한
 DAILY_CREDIT_LIMIT = 5
 
@@ -134,7 +133,7 @@ async def issue_credit_token(user_id: int) -> str:
         )
     return token
 
-#계산 성공 후 토큰을 소비. 동일 토큰의 재계산은 추가 차감하지 않는다
+#계산 성공 후 토큰을 소비. 동일 토큰의 재계산은 추가 차감하지 않음
 async def consume_credit_token(user_id: int, token: str, unlimited: bool = False) -> int:
     daily_key, ttl_seconds, _ = _daily_key_and_ttl(user_id)
 
