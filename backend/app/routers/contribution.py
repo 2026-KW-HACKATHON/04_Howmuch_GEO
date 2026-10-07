@@ -11,6 +11,9 @@ from app.schemas.realestate.realestate_request import ZoneRequest, ContributionR
 from app.schemas.realestate.realestate_response import ContributionResponse
 from app.services.building_ledger_service import fetch_exclusive_total
 from app.services.credit_service import consume_credit_token
+from app.services.organization_service import get_active_organization
+from app.database.database_connection import get_db
+from sqlalchemy.orm import Session
 from app.services.zone_service import get_cached_exclusive_total, set_cached_exclusive_total
 from app.utils.slider_builder import build_sliders
 from app.exceptions.exceptions_handler import BadRequestException, ServiceUnavailableException, UnauthorizedException
@@ -37,7 +40,7 @@ from AI.predict.construction_cost import load_index, predict_cost_per_pyeong
 from AI.predict.sale_price import escalate as escalate_sale, fetch_trades, predict_sale_price_per_m2
 from dataclasses import asdict
 from datetime import datetime
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from typing import List, Optional
 from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
@@ -95,7 +98,7 @@ def _shift_ym(ym: str, years: float) -> str:
     "/contribution",
     response_model = ContributionResponse,
     summary = "조합원 개인 분담금 및 사업성 계산")
-async def get_contribution(req: ContributionRequest, request: Request):
+async def get_contribution(req: ContributionRequest, request: Request, session: Session = Depends(get_db)):
     user_id = request.session.get("user_id")
     if user_id is None:
         raise UnauthorizedException("로그인이 필요합니다.")
@@ -383,7 +386,8 @@ async def get_contribution(req: ContributionRequest, request: Request):
     response = ContributionResponse.model_validate(
         {**result_payload, "credits_remaining": 0}
     )
-    credits_remaining = await consume_credit_token(int(user_id), req.credit_token)
+    unlimited = get_active_organization(session, int(user_id)) is not None
+    credits_remaining = await consume_credit_token(int(user_id), req.credit_token, unlimited=unlimited)
 
     #검증된 응답 모델에 잔액만 반영해 FastAPI 응답 검증 실패로 인한 오차감을 차단
     return response.model_copy(update={"credits_remaining": credits_remaining})

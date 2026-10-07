@@ -46,40 +46,67 @@ if not KAKAO_API_KEY:
 )
 async def get_region_news(request: NewsRequest):
 
-    #요청에서 쿼리 추출
-    search_keyword = f"{request.query}"
-
-    #쿼리에 대한 요청 URL 제작
-    url = f"https://dapi.kakao.com/v2/search/web?query={search_keyword}&sort=recency&size=8"
-
     headers = {
         "Authorization": f"KakaoAK {KAKAO_API_KEY}"
     }
+
+    cleaned_documents = []
     
     try:
         async with httpx.AsyncClient() as client:
 
             #요청 호출
             logger.warning(f"[ Log ] : News API 호출 시도 : {str(request.query)}")
+
+            #재개발 뉴스 검색
+
+            search_keyword = f"{request.query} 재개발"
+            url = f"https://dapi.kakao.com/v2/search/web?query={search_keyword}&sort=recency&size=8"
+            cleaned_documents = []
+
             res = await client.get(url, headers=headers)
 
             #성공적이라면 데이터 파싱 후 반환
             if res.status_code == 200:
                 raw_documents = res.json().get("documents", [])
-                cleaned_documents = []
 
                 for item in raw_documents:
+                    if clean_html(item.get("url")[:12]) == "https://namu" or clean_html(item.get("url")[:25]) == "https://gall.dcinside.com":
+                        continue
+                    if clean_html(item.get("title")).endswith("pdf"):
+                        continue
                     cleaned_documents.append({
-                    "title": clean_html(item.get("title")),
-                    "contents": clean_html(item.get("contents")),
-                    "url": item.get("url"),
-                    "published_at": item.get("datetime")
-                })
-                
-                return cleaned_documents
+                        "title": clean_html(item.get("title")),
+                        "contents": clean_html(item.get("contents")),
+                        "url": item.get("url"),
+                        "published_at": item.get("datetime")
+                    })
+
+            #재건축 뉴스 검색
+
+            search_keyword = f"{request.query} 재건축"
+            url = f"https://dapi.kakao.com/v2/search/web?query={search_keyword}&sort=recency&size=8"
+
+            res = await client.get(url, headers=headers)
+
+            if res.status_code == 200:
+                raw_documents = res.json().get("documents", [])
+
+                for item in raw_documents:
+                    if clean_html(item.get("url")[:12]) == "https://namu":
+                        continue
+                    if clean_html(item.get("title")).endswith("pdf"):
+                        continue
+                    cleaned_documents.append({
+                        "title": clean_html(item.get("title")),
+                        "contents": clean_html(item.get("contents")),
+                        "url": item.get("url"),
+                        "published_at": item.get("datetime")
+                    })
             
-            #오류 발생시 빈 결과 반환
-            return []
+            #결과 반환
+            return cleaned_documents
+
     except:
 
         #예외 발생시 Service Unavailable Exception 발생

@@ -9,7 +9,7 @@ class UserSignUpRequest(BaseModel):
     user_name: str = Field(..., description="아이디")
     password: str = Field(..., min_length=5, description="비밀번호")
     account_type: str = Field(default="personal", pattern="^(personal|leader)$")
-    plan_code: str | None = Field(default=None, pattern="^[ABC]$")
+    plan_code: str | None = Field(default=None, pattern="^(Standard|Pro|Premium)$")
 
     @field_validator("password")
     def validate_password(cls, value):

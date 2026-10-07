@@ -34,10 +34,12 @@ from app.routers.contribution import router as contribution_router
 from app.routers.user import router as user_router
 from app.routers.news import router as news_router
 from app.routers.payment import router as payment_router
+from app.routers.organization import router as organization_router
 
 #Database 테이블 생성 이벤트 핸들러 등록
 @app.on_event("startup")
 def create_tables():
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
 
 #AI 모델 라우터 등록
@@ -47,6 +49,7 @@ app.include_router(contribution_router)
 app.include_router(user_router)
 app.include_router(news_router)
 app.include_router(payment_router)
+app.include_router(organization_router)
 
 #사용자 정의 예외 처리기 등록
 add_exception_handlers(app)

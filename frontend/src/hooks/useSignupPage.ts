@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { userSignup } from '../api/user_api'
 import { useNavigate } from 'react-router-dom';
+import type { PaymentRequest } from '../api/payment_api';
 
 export const useSignupPage = () => {
 
@@ -9,6 +10,8 @@ export const useSignupPage = () => {
     const [userName, setUserName] = useState<string>('');
     const [password, setPassword] = useState<string>('');
     const [passwordCheck, setPasswordCheck] = useState<string>('');
+    const [accountType, setAccountType] = useState<'personal' | 'leader'>('personal');
+    const [planCode, setPlanCode] = useState<'Standard' | 'Pro' | 'Premium'>('Standard');
     const [signupAttempted, setSignupAttempted] = useState<boolean>(false);
     
     const isPasswordValid = password.trim() !== '' && passwordCheck.trim() !== '' && passwordCheck === password;
@@ -33,13 +36,26 @@ export const useSignupPage = () => {
             const userData = {
                 email: email,
                 user_name: userName,
-                password: password
+                password: password,
+                account_type: accountType,
+                ...(accountType === 'leader' ? { plan_code: planCode } : {}),
             }
 
             const response = await userSignup(userData);
 
             alert("회원가입에 성공했습니다. 다시 로그인해주세요.");
-            navigate("/login");
+            if (accountType === 'leader') {
+                const paymentParam: PaymentRequest = {
+                    item_name: `조합 플랜 ${planCode}`,
+                    quantity: 1,
+                    price: 0,
+                    tax_free_amount: 0,
+                    plan_code: planCode,
+                };
+                navigate('/login', { state: { afterLoginPath: '/payment', paymentParam } });
+            } else {
+                navigate('/login');
+            }
 
         } catch(err : any) {
             if(err && err.response.status === 409) {
@@ -50,17 +66,17 @@ export const useSignupPage = () => {
             }
         }
     }
-
-
-
     
-
     return {
         handleCaptchaChange,
         setEmail,
         setUserName,
         setPassword,
         setPasswordCheck,
+        accountType,
+        setAccountType,
+        planCode,
+        setPlanCode,
         signupButtonAction,
         isFormValid,
         isPasswordValid,

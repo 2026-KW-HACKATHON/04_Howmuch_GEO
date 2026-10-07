@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import type { PaymentRequest } from '../api/payment_api';
+
+interface LoginNavigationState {
+    afterLoginPath?: string;
+    paymentParam?: PaymentRequest;
+}
 import { userLogin, LoginRequest } from '../api/user_api';
 
 export const useLoginPage = () => {
@@ -11,6 +17,7 @@ export const useLoginPage = () => {
     const isFormValid = isVerified && userName.trim() !== '' && password.trim() !== '';
 
     const navigate = useNavigate();
+    const { state } = useLocation();
 
     //ReCaptcha Handler
     const handleCaptchaChange = (token: string | null) => {
@@ -32,7 +39,12 @@ export const useLoginPage = () => {
             const response = await userLogin(userData as LoginRequest);
 
             alert("로그인에 성공했습니다.");
-            navigate("/main");
+            const navigationState = state as LoginNavigationState | null;
+            if (navigationState?.afterLoginPath === '/payment' && navigationState.paymentParam) {
+                navigate('/payment', { state: { paymentParam: navigationState.paymentParam } });
+            } else {
+                navigate('/main');
+            }
 
         } catch(err : any) {
             setLoginAttempted(true);
