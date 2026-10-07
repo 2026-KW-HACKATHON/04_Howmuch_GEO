@@ -11,10 +11,10 @@ const DEFAULT_PAYMENT: PaymentRequest = {
     tax_free_amount: 0,
 };
 
-const PLAN_PRICES: Record<'A' | 'B' | 'C', number> = {
-    A: 10000,
-    B: 50000,
-    C: 100000,
+const PLAN_PRICES: Record<'Standard' | 'Pro' | 'Premium', number> = {
+    Standard: 10000,
+    Pro: 50000,
+    Premium: 100000,
 };
 
 interface PaymentLocationState {
