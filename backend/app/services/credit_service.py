@@ -54,6 +54,7 @@ return tonumber(redis.call('GET', KEYS[1]) or '0')
 _CONSUME_CREDIT_TOKEN_SCRIPT = """
 local token_state = redis.call('GET', KEYS[2])
 local credits = redis.call('GET', KEYS[1])
+local purchased = tonumber(redis.call('GET', KEYS[3]) or '0')
 if token_state == 'unlimited-consumed' then
     if ARGV[3] == '1' then
         return -3
