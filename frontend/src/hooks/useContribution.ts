@@ -45,6 +45,13 @@ export interface ParcelValuation {
     household_count: number;
     has_building: boolean;
     land_category: string;
+    cost_index?: number;     //재조달원가 상대지수 (구조·용도, 아파트 = 1.0)
+    owner_type?: string;     //토지 소유구분. 국·공유지면 종전자산·조합원 수에서 빠진다
+    //주택 공시가격 (있으면 종전자산 = 공시가격 ÷ 현실화율 — 공동 69% · 단독 53.6%)
+    housing_kind?: string;                            //공동 · 단독 · 빈칸
+    housing_price?: number;                           //공시가격 합계 (만원)
+    housing_units?: number;                           //공동주택가격 호수
+    housing_area_prices?: [number, number, number][] | null;  //[전용면적, 호당 공시가격, 호수]
 }
 
 //구역 종전자산 집계 (/zone 의 prior_asset)
@@ -57,6 +64,8 @@ export interface ZonePriorAsset {
     member_count: number;       //건축물대장 실측 조합원 수
     parcel_count: number;
     building_parcel_count: number;
+    housing_total?: number;          //주택 공시가격으로 잡은 몫 (만원)
+    housing_parcel_count?: number;
     replacement_cost_per_m2: number;
     parcels: ParcelValuation[];
 }
@@ -66,6 +75,9 @@ export interface ZonePriorAsset {
 export interface PriorAssetDetail {
     zone_land_total: number | null;
     zone_building_total: number | null;
+    zone_housing_total?: number | null;      //주택 공시가격 ÷ 현실화율로 잡은 몫
+    housing_parcel_count?: number | null;
+    owner_basis?: string | null;             //내 종전자산을 잡은 방법 (공시가격 ÷ 현실화율 / 토지분 + 건물분)
     zone_total: number;
     zone_ratio: number | null;
     measured_member_count: number | null;
@@ -82,6 +94,148 @@ export interface MemberCountRange {
     min: number;
     max: number;
     capped: boolean;
+}
+
+//관리처분 확정 → 준공 정산 한 단계 (/contribution 의 timeline.stages)
+//  ① 관리처분 확정 ② 분양·임대 시점 반영 ③ 공사비 물가변동 ④ 비물가 초과 증액(= 준공 정산)
+export interface TimelineStage {
+    label: string;
+    proportional_rate: number;
+    total_cost: number;                         //만원
+    total_post_asset: number;                   //만원
+    contribution: number;                       //선택 평형 분담금(만원)
+    unit_contributions: Record<string, number>; //평형별 분담금(만원)
+}
+
+//공공기여 기부면적 비율 (세부 설정, %). 합이 100 이 아니어도 서버가 비율대로 맞춘다
+//  현금과 공공임대 건축비는 부지가액(공시지가 × 2)으로 땅 면적에 환산해 센다 → 서버 AI/engine/public_contribution.py
+export interface ContributionMix {
+    land: number;           //토지
+    public_rental: number;  //공공임대 건축물 기부채납 (대지지분 + 설치비 환산)
+    cash: number;           //현금 — 기부면적의 절반까지 (도시정비법 시행령 제14조②)
+}
+
+//현금 한도 (기부면적 대비). 서버 rules.cash_contribution_max_share 와 같은 값
+export const CASH_MAX_SHARE = 0.5;
+
+//버튼 = 비율 프리셋. 서버 public_contribution.PRESETS 와 같은 값 ("토지 + 현금" 은 현금을 한도인 절반까지 채운다).
+//  토지를 먼저 넣어야 다른 칸이 열리므로(도로·공원 같은 기반시설은 땅으로 낸다) 프리셋도 모두 토지를 포함한다 (2026-10-08)
+export const CONTRIBUTION_PRESETS: { key: string; label: string; sub?: string; mix: ContributionMix }[] = [
+    { key: 'land', label: '토지', mix: { land: 100, public_rental: 0, cash: 0 } },
+    { key: 'land_cash', label: '토지 + 현금', sub: '절반값 자동 입력', mix: { land: 50, public_rental: 0, cash: 50 } },
+    { key: 'land_rental', label: '토지 + 공공임대', sub: '절반값 자동 입력', mix: { land: 50, public_rental: 50, cash: 0 } },
+];
+
+//입력 비율을 「적용」할 수 없는 이유 (없으면 null). 서버도 현금 한도를 넘으면 잘라서 계산한다
+export function contributionMixError(mix: ContributionMix): string | null {
+    const total = mix.land + mix.public_rental + mix.cash;
+    if (!(mix.land > 0)) return '토지 비율을 먼저 입력하세요. 도로·공원 같은 기반시설은 땅으로 냅니다.';
+    if (!(total > 0)) return '비율을 하나 이상 입력하세요.';
+    if (mix.cash / total > CASH_MAX_SHARE + 1e-9) {
+        return `현금은 기부면적의 절반(${CASH_MAX_SHARE * 100}%)까지입니다 (도시정비법 시행령 제14조②).`;
+    }
+    return null;
+}
+
+//두 비율이 같은 배분인가 (합으로 나눠 비교 — 50/50 과 1/1 은 같다)
+export function sameContributionMix(a: ContributionMix, b: ContributionMix): boolean {
+    const ta = a.land + a.public_rental + a.cash;
+    const tb = b.land + b.public_rental + b.cash;
+    if (!(ta > 0) || !(tb > 0)) return ta === tb;
+    return (['land', 'public_rental', 'cash'] as const).every((k) => Math.abs(a[k] / ta - b[k] / tb) < 1e-6);
+}
+
+//사업 일정과 시점별 값 (/contribution 의 timeline)
+//  조합원분양가는 고시일(관리처분)에 명목으로 확정되고, 분담금은 최종 인가(준공) 때 정산된다
+export interface ContributionTimeline {
+    now_ym: string;
+    prior_ym: string;                  //종전자산 평가 (사업시행인가)
+    mgmt_ym: string;                   //분담금 고시일 (관리처분인가)
+    start_ym: string;                  //착공 (일반분양)
+    complete_ym: string;               //최종 인가 (준공)
+    mgmt_years: number;
+    complete_years: number;
+    cost_contract_per_pyeong: number;  //공사비 도급단가 (고시일, 만원/평)
+    cost_final_per_pyeong: number;     //기성 평균 공사비 (준공 정산, 만원/평)
+    escalation_index: number;          //물가변동 배수 (건설공사비지수)
+    escalation_excess: number;         //비물가 초과 배수
+    escalation_total: number;
+    excess_rate: number;               //비물가 초과 연율
+    excess_basis: string;              //초과율을 잰 사례 범위 ("서울 전체" 또는 지역명)
+    excess_case_count: number;
+    excess_span: string;
+    general_price_mgmt_per_m2: number;
+    general_price_start_per_m2: number;
+    project_type?: string;                     //재개발 · 재건축
+    prior_basis?: string;                      //종전자산을 잡은 방법 (재건축 : 공동주택가격 ÷ 현실화율)
+    member_price_mode: 'auto' | 'manual';      //auto : 관리처분 비례율이 target_rate 가 되도록 서버가 역산
+    member_price_target_rate: number | null;   //자동일 때 관리처분 비례율 목표 (%)
+    member_price_ratio_solved: number | null;  //범위 제한 전 역산 값
+    member_price_ratio_bound: 'min' | 'max' | null;  //역산 값이 범위 끝에 걸렸으면 그 끝
+    member_price_ratio: number;                //계산에 쓴 비율 (자동이면 역산 값)
+    member_price_per_m2: number;       //조합원분양가 (고시일 확정, 만원/㎡)
+    member_price_per_pyeong: number;   //조합원분양가 (고시일 확정, 만원/평)
+    public_contribution_ratio: number; //종상향 공공기여율
+    net_site_area_m2: number;          //공공기여를 뺀 대지면적
+    //공공기여 — 적용된 기부면적 비율(%, 합 100 으로 맞춘 값)·기부면적(㎡), 실제로 뗀 토지 비율, 현금(만원)·환산부지(㎡),
+    //  기부채납 공공임대 세대수, 부지가액(만원/㎡), 안내 문장
+    contribution_mix?: ContributionMix;
+    contribution_total_m2?: number;
+    contribution_land_ratio?: number;
+    contribution_cash?: number;
+    contribution_cash_area_m2?: number;
+    contribution_rental_count?: number;
+    contribution_site_value_per_m2?: number;
+    contribution_note?: string;
+    stages: TimelineStage[];
+}
+
+//종상향 판정 (/zone 의 upzoning)
+//  기준 용도지역 = 필지 원래 용도지역의 면적가중 평균 단계. 그보다 높게 고르면 공공기여율이 붙는다
+export interface UpzoningInfo {
+    base_zoning: string | null;
+    selected_zoning: string | null;
+    steps: number;
+    contribution_ratio: number;
+    note: string;
+}
+
+//사업성 보정계수 (/zone 의 business_correction)
+//  서울시 평균 공시지가 ÷ 구역 '대' 필지 평균 (1.00~2.00). 허용·상한 용적률을 올린다
+export interface BusinessCorrection {
+    factor: number;
+    raw: number | null;
+    zone_avg_price: number | null;
+    seoul_avg_price: number;
+    basis_year: number;
+    parcel_count: number;
+    note: string;
+    project_type?: string;          //재개발 · 재건축 (재건축은 서울시 공동주택 평균 공시지가 + α + β)
+    land_factor?: number | null;    //공시지가 보정계수
+    site_factor?: number;           //재건축 α 대지면적 보정계수
+    density_factor?: number;        //재건축 β 세대밀도 보정계수
+}
+
+//재건축 단지 정보 (/zone 의 reconstruction). /contribution 에 그대로 돌려보낸다
+export interface ReconstructionInfo {
+    members: number;                          //조합원 수 = 아파트 세대 + 상가 등 비주거 호수
+    commercial: {                             //상가 등 비주거 (토지 지분 + 건물 원가법). 없으면 null
+        units: number;
+        floor_area_m2: number;
+        land_share_m2: number;
+        land_price_per_m2: number;
+        structure: string;
+        elapsed_years: number;
+        cost_index: number;
+    } | null;
+    households: number;                       //총괄표제부 세대수
+    site_area_m2: number;                     //단지 대지면적 (아파트 필지 + 부속지번)
+    current_far: number | null;               //현황용적률 (%) — 과밀단지 판정
+    official_year: number | null;             //공동주택가격 기준 년도
+    unit_count: number;
+    official_total: number;                   //공동주택가격 합계 (만원)
+    area_prices: [number, number, number][];  //[전용면적, 호당 공시가격(만원), 호수]
+    annex_pnus: string[];
 }
 
 //분담금 계산 결과 (/contribution 응답)
@@ -106,6 +260,7 @@ export interface ContributionResult {
     prior_asset_detail?: PriorAssetDetail;
     rental_exclusive_area_m2?: number;   //계산에 쓴 임대 전용면적. 세부 설정 입력란의 기본 표시값
     member_count_range?: MemberCountRange;
+    timeline?: ContributionTimeline;     //사업 일정 · 관리처분 확정 → 준공 정산 단계
     warnings: string[];
     credits_remaining: number;
 }
@@ -150,6 +305,13 @@ export function buildMetrics(
 
     //계산 결과가 없으면 조합원 수도 0으로 둔다 (분양 세대수를 모르는 상태)
     const members = result ? memberCount : 0;
+
+    //조합원 분양가(만원/평) : 고시일 확정값. timeline 이 없는 응답(이전 백엔드)이면 평형 분양가에서 되돌린다.
+    //  계산 전에는 비워 둔다 — 슬라이더의 오늘 기준 분양가로 채우면 계산 후 값(고시일 기준)과 시점이 달라 헷갈린다
+    const firstUnit = result?.unit_contributions?.[0];
+    const memberPriceRatio = result?.timeline?.member_price_ratio ?? null;
+    const memberPricePerPyeong = result?.timeline?.member_price_per_pyeong
+        ?? (firstUnit && firstUnit.supply_area_m2 ? firstUnit.member_price / (firstUnit.supply_area_m2 / PYEONG) : null);
 
     return [
         { label: '대지면적', value: toM2(zone?.site_area_m2 ?? 0) },
@@ -196,6 +358,18 @@ export function buildMetrics(
             value: result?.prior_asset_detail?.rho
                 ? `${toEok(result?.prior_asset ?? 0)} · ×${result.prior_asset_detail.rho.toFixed(2)}`
                 : toEok(result?.prior_asset ?? 0),
+        },
+        //조합원 분양가 : 분담금 고시일(관리처분)에 명목으로 확정되는 평당 가격.
+        //  종전자산 옆에 둔다 — 분담금 = 조합원분양가 − 권리가액(종전자산 × 비례율) 의 두 입력이다.
+        //  확정 이후에는 오르지 않는다 (공사비 증액은 비례율을 깎아 분담금으로 돌아온다)
+        {
+            label: '조합원 분양가',
+            //비율을 같이 적는다. 자동이면 관리처분 비례율 100% 가 되도록 서버가 정한 값이다
+            value: memberPricePerPyeong
+                ? `${Math.round(memberPricePerPyeong).toLocaleString()}만원/평`
+                  + (memberPriceRatio ? ` · 일반분양가의 ${Math.round(memberPriceRatio * 100)}%` : '')
+                : '–',
+            sliderKey: 'member_price_ratio',
         },
     ];
 }

@@ -141,8 +141,9 @@ async def set_cached_land(pnu: str, data: dict):
 #Redis 를 통한 건축물대장 캐시 불러오기
 #  land:{pnu} 에 합치지 않고 따로 둔다 — 이미 7일 TTL 로 캐시된 기존 항목을 깨지 않고,
 #  건축물대장은 거의 변하지 않아 더 긴 TTL 을 줄 수 있다
+#  키 bld2: — 2026-10-07 기타용도·층수(재조달원가 상대지수용)를 더하면서 바꿨다. 예전 bld: 항목에는 그 필드가 없다
 async def get_cached_building(pnu: str) -> Optional[dict]:
-    cache_key = f"bld:{pnu}"
+    cache_key = f"bld2:{pnu}"
 
     try:
         val = await redis_client.get(cache_key)
@@ -164,7 +165,7 @@ async def set_cached_building(pnu: str, data: dict) -> None:
     if not data:
         return
 
-    cache_key = f"bld:{pnu}"
+    cache_key = f"bld2:{pnu}"
 
     try:
         serialized_data = json.dumps(data, ensure_ascii=False, default=str)
@@ -208,3 +209,82 @@ async def set_cached_exclusive_total(pnu: str, total: float) -> None:
 
     except Exception as err:
         logger.warning(f"[ Log ] : Redis 캐시 저장 실패 : Exclusive : {cache_key} : {err}")
+
+
+#Redis 를 통한 토지소유정보 캐시
+#  국·공유지를 종전자산에서 빼는 데 쓴다. 소유구분은 거의 바뀌지 않아 30일 둔다
+#own3 : 첫 행만 보던 own: 은 공유 필지를 국공유로 잘못 갈랐고, own2 에는 1997년 전 소유자 수가 없다 → 키를 바꿔 버린다
+async def get_cached_possession(pnu: str) -> Optional[dict]:
+    cache_key = f"own3:{pnu}"
+
+    try:
+        val = await redis_client.get(cache_key)
+        if val:
+            return json.loads(val)
+
+    except Exception as err:
+        logger.warning(f"[ Log ] : Redis 캐시 불러오기 실패 : Possession : {cache_key} : {err}")
+
+    return None
+
+
+async def set_cached_possession(pnu: str, data: dict) -> None:
+    if not data:
+        return
+
+    cache_key = f"own3:{pnu}"
+
+    try:
+        await redis_client.setex(cache_key, 2592000, json.dumps(data, ensure_ascii=False))
+
+    except Exception as err:
+        logger.warning(f"[ Log ] : Redis 캐시 저장 실패 : Possession : {cache_key} : {err}")
+
+
+#Redis 를 통한 재건축용 캐시 — 아파트 필지에만 쓴다 (30일)
+#  aptc2 : 아파트 단지 정보 (총괄표제부 세대수·용적률 산정 연면적·부속지번·상가 호수·연면적)
+#  aptp : 공동주택가격 요약 (호별 공시가격 합계·호수·전용면적별 중앙값). 매년 4월 공시라 30일이면 충분하다
+async def _get_json(cache_key: str, label: str) -> Optional[dict]:
+    try:
+        val = await redis_client.get(cache_key)
+        if val:
+            return json.loads(val)
+    except Exception as err:
+        logger.warning(f"[ Log ] : Redis 캐시 불러오기 실패 : {label} : {cache_key} : {err}")
+    return None
+
+
+async def _set_json(cache_key: str, label: str, data: dict) -> None:
+    if not data:
+        return
+    try:
+        await redis_client.setex(cache_key, 2592000, json.dumps(data, ensure_ascii=False))
+    except Exception as err:
+        logger.warning(f"[ Log ] : Redis 캐시 저장 실패 : {label} : {cache_key} : {err}")
+
+
+#aptc2 : 상가(비주거 동) 호수·연면적을 더한 판. 예전 aptc: 값에는 없다
+async def get_cached_apartment(pnu: str) -> Optional[dict]:
+    return await _get_json(f"aptc2:{pnu}", "Apartment")
+
+
+async def set_cached_apartment(pnu: str, data: dict) -> None:
+    await _set_json(f"aptc2:{pnu}", "Apartment", data)
+
+
+#hsp : 개별주택가격 (단독·다가구) — 재개발 종전자산
+async def get_cached_house_price(pnu: str) -> Optional[dict]:
+    return await _get_json(f"hsp:{pnu}", "HousePrice")
+
+
+async def set_cached_house_price(pnu: str, data: dict) -> None:
+    await _set_json(f"hsp:{pnu}", "HousePrice", data)
+
+
+async def get_cached_apartment_prices(pnu: str) -> Optional[dict]:
+    return await _get_json(f"aptp:{pnu}", "ApartmentPrice")
+
+
+async def set_cached_apartment_prices(pnu: str, data: dict) -> None:
+    await _set_json(f"aptp:{pnu}", "ApartmentPrice", data)
+

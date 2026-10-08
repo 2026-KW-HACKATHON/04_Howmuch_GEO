@@ -10,6 +10,7 @@
 # 실거래가는 전용면적 기준, 분양가는 공급면적 기준이라 환산이 필요하다.
 import csv
 import os
+import re
 import statistics
 import urllib.parse
 import urllib.request
@@ -61,9 +62,15 @@ MAX_MONTHLY_RATE = 0.007
 #이 개월 수를 넘겨 외삽하면 경고한다
 LONG_HORIZON_MONTHS = 24
 
-#같은 시군구 사례가 이 건수 미만이면 인접 지역 사례까지 합쳐 쓴다
-#  한 단지만 반복해서 들어가면 그 단지 특성에 끌려가기 때문
-MIN_REGION_CASES = 5
+#같은 시군구 사례가 이 단지 수 미만이면 인접 지역 사례까지 합쳐 쓴다
+#  2026-10-08 : 건수가 아니라 단지 수로 센다 — 서울원아이파크 84A·B·C 가 3건으로 세어져 중앙값이 한 단지로 쏠렸다.
+#  3 = 중앙값이 한 단지에 끌려가지 않는 최소 단지 수 (단지 1~2개면 그 단지 값이 곧 중앙값이다)
+MIN_REGION_COMPLEXES = 3
+
+
+#사례 이름 → 단지 (끝의 주택형 표기 "84A" · "84" 를 뗀다). 같은 단지의 주택형은 한 단지로 묶어 중앙값을 낸다
+def complex_key(name: str) -> str:
+    return re.sub(r"\s+\d+[A-Za-z]?$", "", (name or "").strip())
 
 
 @dataclass
@@ -271,24 +278,28 @@ def predict_sale_price_per_m2(
         warnings.append(rate_note)
 
     #1순위 : 분양 사례
-    #지역 우선. 다만 사례가 MIN_REGION_CASES 건도 안 되면 인접 지역까지 합쳐 쓴다
+    #지역 우선. 다만 같은 시군구 단지가 MIN_REGION_COMPLEXES 개도 안 되면 인접 지역까지 합쳐 쓴다
     #  (월계동은 장위뉴타운과 붙어 있어 시세 흐름이 비슷하다)
     if region:
         same_region = [c for c in cases if c.region == region]
-        if len(same_region) >= MIN_REGION_CASES:
+        if len({complex_key(c.name) for c in same_region}) >= MIN_REGION_COMPLEXES:
             cases = same_region
         elif cases:
-            warnings.append(f"{region} 분양 사례가 {len(same_region)}건뿐이라 인접 지역 사례를 함께 사용했습니다.")
+            warnings.append(
+                f"{region} 분양 사례가 {len({complex_key(c.name) for c in same_region})}개 단지뿐이라 인접 지역 사례를 함께 사용했습니다."
+            )
 
     if cases:
-        escalated = [
-            c.price_per_m2 * (1 + monthly_rate) ** (_months(target_ym) - _months(c.ym))
-            for c in cases
-        ]
-        predicted = statistics.median(escalated)
+        #단지마다 시점 보정한 ㎡당 분양가의 중앙값 → 단지들의 중앙값 (주택형이 많은 단지가 표를 더 갖지 않게)
+        by_complex: dict[str, list[float]] = {}
+        for c in cases:
+            by_complex.setdefault(complex_key(c.name), []).append(
+                c.price_per_m2 * (1 + monthly_rate) ** (_months(target_ym) - _months(c.ym))
+            )
+        predicted = statistics.median(statistics.median(v) for v in by_complex.values())
 
-        if len(cases) < 3:
-            warnings.append(f"분양 사례가 {len(cases)}건뿐이라 신뢰도가 낮습니다.")
+        if len(by_complex) < 3:
+            warnings.append(f"분양 사례가 {len(by_complex)}개 단지뿐이라 신뢰도가 낮습니다.")
         gap = _months(target_ym) - max(_months(c.ym) for c in cases)
         if gap > 0:
             warnings.append(f"분양 사례를 월 {monthly_rate * 100:+.2f}% 로 {target_ym} 까지 보정했습니다.")
@@ -300,7 +311,7 @@ def predict_sale_price_per_m2(
             target_ym=target_ym,
             basis="분양사례",
             market_price_per_m2=0.0,
-            case_count=len(cases),
+            case_count=len(by_complex),
             trade_count=0,
             apt_names=sorted({c.name for c in cases}),
             slider_min=round(predicted * (1 - SLIDER_MARGIN), 1),

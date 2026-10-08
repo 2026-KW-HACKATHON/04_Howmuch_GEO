@@ -34,22 +34,43 @@ class ProjectParams:
     # 규모
     site_area_m2 : float        # 정비구역 면적 (L1)
     floor_area_ratio: float     # 용적률(%) (L2)
-    parking_per_household: float  # 세대당 주차대수. 지하 연면적을 결정한다 (L2)
+    #주차 여유율 = 실제 주차대수 ÷ 법정 주차대수 (L2). 법정 대수는 평형 구성에서 계산한다 → calc.legal_parking_count
+    #  세대당 대수를 고정하면 작은 평형 구역에서 지하가 부풀어 분담금이 과대해진다 (법정 0.75~1.37대/세대)
+    parking_margin: float
 
     # 분양
     member_count: int                   # 조합원 수 (L1)
     general_price_per_m2 : float        # 제곱 당 일반 분양가(만원) (L2/L3)
     member_price_ratio : float          # 조합원 분양가(일반분양가 대비 비율) (L2)
-    #임대 인수수입 : 도시정비법 제55조에 따라 시·도지사가 표준건축비로 인수한다.
-    #  세대당 정액이 아니라 "임대 공급면적 × 표준건축비" 다 (국토부고시 제2023-64호).
+    #조합원분양가 시점 계수 = (관리처분 시점 일반분양가) ÷ (분양 공고 시점 일반분양가).
+    #  조합원분양가는 관리처분계획에서 명목으로 확정되고, 일반분양은 그보다 늦은 착공 무렵에 한다.
+    #  엔진은 조합원분양가를 "일반분양가 × 비율" 로 계산하므로, 일반분양가를 분양 공고 시점으로
+    #  밀면 조합원분양가까지 따라 오른다. 이 계수로 관리처분 시점 값에 묶어 둔다 (1.0 = 같은 시점)
+    member_price_time_factor : float = 1.0
+    #임대 인수수입 (건물) : 세대당 정액이 아니라 "임대 공급면적 × 단가 + 임대 몫 지하층면적 × 지하층 단가" 다
+    #  · 의무 임대    : 기본형건축비(지상층 + 지하층)의 80% (도시정비법 시행령 제68조②1, 2025-03-18 시행 · 서울시 조례 제41조①)
+    #  · 제54조 완화분 : 공공건설임대주택 표준건축비, 지하층은 그 63% (도시정비법 제55조② · 서울시 매입기준)
     #  층수 구간만 사용자가 고르고(노드 슬라이더), 전용면적 구간은 아래 값에서 자동으로 정해진다
     rental_floor_band : str = DEFAULT_FLOOR_BAND      # 임대동 층수 구간 (L2, 노드 슬라이더)
-    rental_exclusive_area_m2 : float = 39.0           # 임대 1세대 주거전용면적. 표의 행을 고르는 데 쓴다 (L1)
-    #임대 인수수입 시점 보정 배수.
-    #  표준건축비는 2023년 고시값이라 사업기간 뒤 관리처분 시점까지 밀어야 한다.
-    #  분양가·공사비는 밀리는데 임대만 2023년에 멈춰 있으면 종후자산이 과소평가된다.
-    #  정책가격이라 공사비지수(연 3.97%)대로 오르지 않는다 — 실측 인상률을 쓴다 (L3)
+    rental_exclusive_area_m2 : float = 39.0           # 임대 1세대 주거전용면적. 표의 전용면적 구간을 고르는 데 쓴다 (L1)
+    #의무 임대 건물 인수가격 시점 보정 배수 = 건설공사비지수(일반분양 공고 시점) ÷ 건설공사비지수(기본형건축비 고시 월).
+    #  제68조는 "일반분양 공고일 직전에 고시된" 기본형건축비를 쓴다. 기본형건축비는 자재비·노무비 변동을 반영해
+    #  매년 3·9월(+비정기) 다시 고시되는 값이라 공사비지수로 민다 (L3)
     rental_cost_multiplier : float = 1.0
+    #제54조 완화분 건물 인수가격 시점 보정 배수 (표준건축비 고시 월 → 인수 시점).
+    #  표준건축비는 정책가격이라 공사비지수가 아니라 고시 개정 실측 인상률(연 1.42%)로 민다 (L3)
+    uplift_rental_cost_multiplier : float = 1.0
+    #의무 임대 부속토지 감정가(만원/㎡). 의무 임대의 부속토지는 감정가로 인수한다
+    #  (기준시점 = 사업시행계획인가 고시일 → 종전자산 토지분과 같은 시점·방법이라 라우터가 거기서 구한다, L3).
+    #  제54조 완화분 임대의 부속토지는 기부채납(무상)이라 이 값을 곱하지 않는다.
+    #  기본값 0 = 부속토지 수입을 넣지 않는다 (라우터를 거치지 않는 호출용)
+    rental_land_price_per_m2 : float = 0.0
+    #공공기여 방식 (AI/engine/public_contribution.py). 기본값 0 = 토지로만 낼 때 (L3, 라우터가 계산)
+    #  현금 기부채납액(만원) : "토지 + 현금" 이면 기부면적의 절반을 현금으로 낸다 → 사업비에 더한다
+    contribution_cash : float = 0.0
+    #  기부채납 공공임대 세대수 : "공공임대 건축물" 이면 공공임대를 지어 기부채납한다 → 인수대금 없음.
+    #  의무 임대·제54조 완화분과 별개로 주택 공급면적에서 떼어 둔다
+    donated_rental_count : int = 0
 
     # 비용
     construction_cost_per_pyeong : float    # 평당 공사비(만원) (L2/L3)
@@ -61,7 +82,9 @@ class ProjectParams:
     # 비례율 고정값
 
     # 임대 (용적률과 연동. 도시정비법 제54조 + 서울시 조례 기준)
-    far_base : float                 # 조례 기준 용적률(%). 완화분을 재는 기준점, ZoneSummary.far_min (L1)
+    #정비계획 상한용적률(%). 도시정비법 제54조④ 초과용적률(= 법적상한 − 정비계획 용적률)을 재는 기준점.
+    #  4단 체계의 상한(사업성 보정계수 반영), 4단이 없는 용도지역은 조례용적률 (zone.far_plan().ceiling) (L1)
+    far_base : float
     base_rental_ratio : float        # 기준 구간 임대 의무비율 (연면적 기준, 서울 주거지역 0.10) (L1)
     uplift_rental_share : float      # 상향 완화 구간 중 임대로 공급하는 비율 (법정 상한 0.75) (L1)
     rental_supply_area_m2 : float    # 임대 1세대 공급 면적 (L1)
@@ -101,6 +124,14 @@ class ProjectParams:
         if not 0 < self.housing_supply_efficiency <= 1:
             raise ValueError(
                 f"housing_supply_efficiency 는 0~1 이어야 합니다: {self.housing_supply_efficiency}"
+            )
+        if self.rental_land_price_per_m2 < 0:
+            raise ValueError(
+                f"rental_land_price_per_m2 는 0 이상이어야 합니다: {self.rental_land_price_per_m2}"
+            )
+        if self.contribution_cash < 0 or self.donated_rental_count < 0:
+            raise ValueError(
+                f"공공기여 현금·기부 세대수는 0 이상이어야 합니다: {self.contribution_cash}, {self.donated_rental_count}"
             )
 
         #상가 + 커뮤니티가 1 이상이면 주택 연면적이 0 이하가 됨
@@ -159,6 +190,7 @@ class OwnerInput:
     building_elapsed_years: float | None = None  # 경과연수 = 평가시점 − 사용승인일 (L1)
     exclusive_share: float = 1.0             # 집합건물에서 내 몫 (전유면적 ÷ 건물 전유합계) (L1)
     replacement_cost_per_m2: float | None = None  # ㎡당 재조달원가(만원). 공사비 예측값 (L3)
+    building_cost_index: float = 1.0         # 재조달원가 상대지수 (구조·용도, 아파트 = 1.0) — 구역 집계와 같은 값 (L1)
 
     # 공시가격 → 종전자산 환산 배수.
     #   단일 배수는 개인·구역에 같은 값이 들어가 분담금에서 약분된다(수치 검증됨).

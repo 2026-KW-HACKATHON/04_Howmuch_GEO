@@ -1,12 +1,18 @@
 import React, { useState } from 'react';
-import { SlidersState } from '../hooks/useSlider';
+import { SliderValue, SlidersState } from '../hooks/useSlider';
 import {
+    BusinessCorrection,
+    CONTRIBUTION_PRESETS,
+    ContributionMix,
     ContributionResult,
+    contributionMixError,
     MAX_UNIT_TYPES,
     MetricRow,
     UnitContribution,
     UnitMixEntry,
+    UpzoningInfo,
     ZonePriorAsset,
+    sameContributionMix,
 } from '../hooks/useContribution';
 import Slider from './Slider';
 
@@ -16,6 +22,17 @@ const BASIC_KEYS = [
     'construction_cost_per_pyeong', 'project_period_years',
 ];
 
+//공공기여 비율 입력 줄 (세부 설정). 기부면적 기준 % — 현금·공공임대 건축비는 부지가액으로 땅 면적에 환산한다
+const CONTRIBUTION_MIX_ROWS: { key: keyof ContributionMix; label: string; limit?: string }[] = [
+    { key: 'land', label: '토지' },
+    { key: 'cash', label: '현금', limit: '최대 50%' },
+    { key: 'public_rental', label: '공공임대 건축물' },
+];
+
+//입력 중이거나 서버 안내가 없을 때 보여주는 설명
+const CONTRIBUTION_MIX_HINT =
+    '토지를 먼저 입력하면 현금·공공임대 칸이 열립니다. 기부면적 기준 비율이고, 현금·공공임대 건축비는 공시지가 × 2 로 땅 면적에 환산해 셉니다.';
+
 //평형 구성 입력란이 하나도 없을 때 보여줄 첫 줄 (아직 계산 결과가 없는 상태)
 const EMPTY_MIX_ROW: UnitMixEntry = { exclusive_area_m2: 59, household_ratio: 30 };
 
@@ -23,19 +40,27 @@ interface ContributionPanelProps {
     result: ContributionResult | null;   //분담금 계산 결과 (/contribution 응답). 필지 선택 전에는 null
     metrics: MetricRow[];                //상단 지표 목록
     sliders: SlidersState;
-    onSliderChange: (key: string, newValue: number | string) => void;
+    onSliderChange: (key: string, newValue: SliderValue) => void;
+    onSliderAuto?: (key: string) => void;  //자동 슬라이더(조합원 분양가 비율)를 다시 자동으로
     unitMix: UnitMixEntry[] | null;      //사용자가 손댄 평형 구성. null 이면 서버 실측 기본값
     onUnitMixChange: (rows: UnitMixEntry[]) => void;
     rentalExclusive: number | null;      //사용자가 입력한 임대 전용면적. null 이면 서버 기본값
     onRentalExclusiveChange: (value: number | null) => void;
     onApplyUnitMix: () => void;          //평형·비율은 「적용」을 눌러야 계산에 반영된다
     unitMixDirty: boolean;               //입력값이 적용값과 다른가
+    contributionMix: ContributionMix;                            //입력 중인 공공기여 비율 (「적용」 전일 수 있다)
+    onContributionMixChange: (mix: ContributionMix) => void;
+    onApplyContributionMix: () => void;                          //공공기여 비율도 「적용」을 눌러야 계산에 반영된다
+    contributionMixDirty: boolean;                               //입력 비율이 적용된 비율과 다른가
     priorAsset: ZonePriorAsset | null;   //구역 종전자산 집계. 내 필지 목록이 여기 있다
     ownerPnu: string;                    //내 필지. 비우면 구역 1인분(ρ=1)
     onSelectOwnerPnu: (pnu: string) => void;
     ownerExclusive: number | null;       //집합건물에서 내 전유면적(㎡)
     onOwnerExclusiveChange: (value: number | null) => void;
     zoningStale: boolean;                //용도지역을 바꿨는데 아직 다시 분석하지 않았다
+    upzoning: UpzoningInfo | null;       //종상향 판정 (/zone). steps > 0 이면 공공기여로 대지가 준다
+    businessCorrection: BusinessCorrection | null;  //사업성 보정계수 (/zone)
+    desiredUnit: string;                 //단계별 내역을 보여줄 평형 (없으면 첫 평형)
     targetYm: string;                    //공사비·분양가 예측 기준 시점 "YYYY-MM"
     loading?: boolean;                   //재계산 중이면 값을 흐리게 표시한다
 }
@@ -50,11 +75,12 @@ const INPUT_CLASS =
 
 //예상 분담금 패널
 export default function ContributionPanel({
-    result, metrics, sliders, onSliderChange,
+    result, metrics, sliders, onSliderChange, onSliderAuto,
     unitMix, onUnitMixChange, rentalExclusive, onRentalExclusiveChange,
     onApplyUnitMix, unitMixDirty,
+    contributionMix, onContributionMixChange, onApplyContributionMix, contributionMixDirty,
     priorAsset, ownerPnu, onSelectOwnerPnu, ownerExclusive, onOwnerExclusiveChange,
-    zoningStale, targetYm, loading = false,
+    zoningStale, upzoning, businessCorrection, desiredUnit, targetYm, loading = false,
 }: ContributionPanelProps) {
     const [tab, setTab] = useState<'basic' | 'detail'>('basic');
 
@@ -70,11 +96,24 @@ export default function ContributionPanel({
         });
     };
 
-    //사업 기간 : 0 년이면 "현재", 아니면 "N년 후"
-    const periodYears = Number(sliders.project_period_years?.value ?? 0);
-    const periodLabel = periodYears > 0 ? `${periodYears}년 후` : '현재';
+    //예상 분담금은 최종 인가(준공) 때 정산되는 금액이다.
+    //  사업 기간 슬라이더는 [분담금 고시일, 최종 인가] 이고, 예전 백엔드는 숫자 하나(고시일)를 내려준다
+    const timeline = result?.timeline ?? null;
+    const periodValue = sliders.project_period_years?.value;
+    const completeYears = timeline?.complete_years
+        ?? (Array.isArray(periodValue) ? periodValue[1] : Number(periodValue ?? 0));
+    const completeYear = timeline ? timeline.complete_ym.slice(0, 4) : String(new Date().getFullYear() + completeYears);
+    const periodLabel = completeYears > 0
+        ? (Array.isArray(periodValue) || timeline ? `최종 인가 ${completeYears}년 후 · ${completeYear}` : `${completeYears}년 후`)
+        : '현재';
 
     const units: UnitContribution[] = result?.unit_contributions ?? [];
+
+    //관리처분 확정 → 준공 정산 단계별 내역 (한 평형 기준)
+    const stageUnit = units.some((unit) => unit.name === desiredUnit) ? desiredUnit : units[0]?.name;
+    const stages = timeline?.stages ?? [];
+    const stageValue = (index: number) => (stageUnit ? stages[index]?.unit_contributions?.[stageUnit] ?? 0 : 0);
+    const signedEok = (manwon: number) => `${manwon >= 0 ? '+' : '−'}${toEok(Math.abs(manwon))}`;
     const saleCount = units.reduce((sum, unit) => sum + unit.count, 0);
     const rentalCount = result?.project.rental_count ?? 0;
     const totalCount = saleCount + rentalCount;
@@ -171,6 +210,15 @@ export default function ContributionPanel({
                     </ul>
                 )}
 
+                {/* 소형 평형 안내 : 모델은 일반분양 평형 지수를 조합원분양가에도 그대로 곱한다.
+                    조합은 총회에서 평형별 조합원가를 따로 정하므로 소형은 어긋나기 쉽다 (미미삼 계획 : 39㎡ 가 ㎡당 가장 비쌌다) */}
+                {units.some((unit) => parseFloat(unit.name) < 60) && (
+                    <p className="mt-1.5 text-[11px] leading-snug text-gray-400">
+                        60㎡ 미만 평형의 조합원분양가는 조합이 총회에서 정하는 평형별 구조에 따라 달라질 수 있습니다.
+                        모델은 일반분양 평형 지수(청약홈 17개 단지)를 그대로 씁니다.
+                    </p>
+                )}
+
                 {/* 권리가액은 평형과 무관해서 한 번만 적는다 (분담금 = 조합원분양가 − 권리가액) */}
                 <p className="mt-1.5 text-[11px] text-gray-400">
                     권리가액 {toEok(result?.right_value ?? 0)}억
@@ -178,6 +226,44 @@ export default function ContributionPanel({
                         <> · 임대 {rentalCount.toLocaleString()}세대({((rentalCount / totalCount) * 100).toFixed(0)}%)는 조합원 분양 대상이 아니라 제외</>
                     )}
                 </p>
+
+                {/* 관리처분 확정 → 준공 정산.
+                    조합원분양가는 고시일에 명목으로 묶이고 공사비는 기성 때까지 오른다 → 비례율이 깎여 추가분담금이 된다.
+                    확정 이후 증액은 물가변동(지수)과 비물가 초과(사례 실측)로 나눠 보여준다 */}
+                {timeline && stages.length === 4 && stageUnit && (
+                    <div className="mt-2 rounded-lg bg-gray-50 px-2.5 py-2 text-[11px] tabular-nums text-gray-500">
+                        <div className="flex justify-between">
+                            <span>{stageUnit}형 · 관리처분 확정 ({timeline.mgmt_ym.slice(0, 4)})</span>
+                            <span className="font-semibold text-gray-700">{toEok(stageValue(0))}억</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span>분양·임대 시점 반영</span>
+                            <span>{signedEok(stageValue(1) - stageValue(0))}억</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span>공사비 물가변동 <span className="text-gray-400">(지수 ×{timeline.escalation_index.toFixed(2)})</span></span>
+                            <span>{signedEok(stageValue(2) - stageValue(1))}억</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span>
+                                비물가 초과 증액{' '}
+                                <span className="text-gray-400">
+                                    (연 {(timeline.excess_rate * 100).toFixed(2)}% · {timeline.excess_basis} {timeline.excess_case_count}건)
+                                </span>
+                            </span>
+                            <span>{signedEok(stageValue(3) - stageValue(2))}억</span>
+                        </div>
+                        <div className="mt-0.5 flex justify-between border-t border-gray-200 pt-0.5 font-semibold text-gray-700">
+                            <span>준공 정산 ({timeline.complete_ym.slice(0, 4)})</span>
+                            <span>{toEok(stageValue(3))}억</span>
+                        </div>
+                        <p className="mt-1 text-[10.5px] leading-relaxed text-gray-400">
+                            공사비 {Math.round(timeline.cost_contract_per_pyeong).toLocaleString()} →{' '}
+                            {Math.round(timeline.cost_final_per_pyeong).toLocaleString()}만원/평 (도급 → 기성 평균).
+                            과거 추세가 이어진다고 본 값입니다.
+                        </p>
+                    </div>
+                )}
             </div>
             <div className="mx-5 border-t border-gray-900" />
 
@@ -204,7 +290,38 @@ export default function ContributionPanel({
                 비례율 = (종후자산 − 총사업비) ÷ 종전자산 &nbsp;·&nbsp;
                 권리가액 = 종전자산 × 비례율 &nbsp;·&nbsp;
                 <b className="text-gray-500">분담금 = 조합원분양가 − 권리가액</b>
+                <br />
+                재건축초과이익환수(재초환)는 재건축만 대상이라 재개발 분담금에는 붙지 않습니다 (재초환법 제2조).
             </p>
+
+            {/* 계산에 반영된 정비계획 조건 : 사업성 보정계수 · 공공기여(상한용적률 산식·종상향) */}
+            {((businessCorrection && businessCorrection.factor > 1)
+                || (upzoning && upzoning.steps > 0)
+                || (timeline?.public_contribution_ratio ?? 0) > 0) && (
+                <div className="mx-5 mb-3 space-y-1 rounded-lg bg-blue-50 px-2.5 py-2 text-[11.5px] leading-relaxed text-blue-800">
+                    {businessCorrection && businessCorrection.factor > 1 && (
+                        <p>
+                            사업성 보정계수 <b>×{businessCorrection.factor.toFixed(2)}</b> — {businessCorrection.project_type === '재건축'
+                                ? '단지 공시지가가 서울시 공동주택 평균보다 낮아(대지면적·세대밀도 보정 포함)'
+                                : '구역 공시지가가 서울시 평균보다 낮아'}
+                            {' '}허용·상한 용적률을 올려 계산했습니다 (서울시 정비사업 사업성 개선방안).
+                        </p>
+                    )}
+                    {upzoning && upzoning.steps > 0 && <p>{upzoning.note}</p>}
+                    {/* 허용을 넘는 용적률은 공공기여(기부채납)로 받는다. 기부한 땅만큼 건축 대지가 준다 */}
+                    {timeline && timeline.public_contribution_ratio > 0 && (
+                        <p>
+                            공공기여 <b>대지의 {(timeline.public_contribution_ratio * 100).toFixed(1)}%</b>를
+                            공공시설 부지로 내놓는 것으로 계산했습니다 — 건축 대지{' '}
+                            {Math.round(timeline.net_site_area_m2).toLocaleString()}㎡.
+                            상한용적률 = 허용 × (1 + 1.3α), α = 기부 면적 ÷ 남은 대지 (서울시 2030 기본계획).
+                            {timeline.public_contribution_ratio > 0.3 && (
+                                <> 비율이 커서 실제로는 건축물·현금 기여로 나눠 낼 수 있습니다 (그러면 대지는 덜 줄고 비용이 듭니다).</>
+                            )}
+                        </p>
+                    )}
+                </div>
+            )}
 
             {/* 경고 : 계산은 됐지만 결과를 의심해야 할 때 */}
             {warnings.length > 0 && (
@@ -340,6 +457,104 @@ export default function ContributionPanel({
                     </div>
                 )}
 
+                {/* 공공기여 방식 선택 : 평형 구성 아래. 토지 · 현금 · 공공임대 건축물을 기부면적 비율(%)로 섞는다.
+                    버튼은 비율 프리셋이다 (토지 100 / 토지 50 + 현금 50 = 절반값 자동 입력 / 공공임대 100).
+                    입력만 해서는 계산하지 않고 「적용」을 눌러야 한다. 현금은 기부면적의 절반까지 (시행령 제14조②).
+                    아래 안내는 적용 뒤에는 서버가 계산 결과로 만든 문장, 입력 중에는 비율 설명·입력 오류다 */}
+                {tab === 'detail' && (() => {
+                    const mixError = contributionMixError(contributionMix);
+                    const appliedMix = result?.timeline?.contribution_mix;
+                    const serverNote = !contributionMixDirty && appliedMix && sameContributionMix(appliedMix, contributionMix)
+                        ? result?.timeline?.contribution_note
+                        : undefined;
+                    return (
+                        <div id="field-contribution_mix" className="mb-4 rounded-lg border border-gray-200 px-3 pb-2.5 pt-2.5">
+                            <h3 className="text-[12.5px] font-semibold text-gray-900">공공기여 방식 선택</h3>
+                            <div className="mt-2 flex gap-0.5 rounded-lg bg-gray-100 p-0.5" role="group" aria-label="공공기여 비율 프리셋">
+                                {CONTRIBUTION_PRESETS.map(({ key, label, sub, mix }) => {
+                                    const selected = sameContributionMix(contributionMix, mix);
+                                    return (
+                                        <button
+                                            key={key}
+                                            type="button"
+                                            aria-pressed={selected}
+                                            onClick={() => onContributionMixChange({ ...mix })}
+                                            className={`flex-1 rounded-md px-1 py-1.5 text-[11.5px] leading-tight transition ${
+                                                selected
+                                                    ? 'bg-white font-semibold text-gray-900 shadow-sm'
+                                                    : 'text-gray-500 hover:text-gray-700'
+                                            }`}
+                                        >
+                                            {label}
+                                            {sub && <span className="mt-0.5 block text-[10px] font-normal text-gray-400">{sub}</span>}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
+                            <div className="mt-1.5">
+                                {CONTRIBUTION_MIX_ROWS.map(({ key, label, limit }) => {
+                                    //도로·공원 같은 기반시설은 땅으로 내므로 토지를 먼저 넣어야 나머지 칸이 열린다
+                                    const locked = key !== 'land' && !(contributionMix.land > 0);
+                                    return (
+                                        <div
+                                            key={key}
+                                            className={`flex items-center gap-1.5 border-t border-dashed border-gray-200 py-1.5 first:border-t-0 ${
+                                                locked ? 'opacity-40' : ''
+                                            }`}
+                                        >
+                                            <span className="text-[11.5px] text-gray-500">{label}</span>
+                                            {limit && <span className="text-[10.5px] text-gray-400">{limit}</span>}
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                max={100}
+                                                step={1}
+                                                placeholder="0"
+                                                value={contributionMix[key] || ''}
+                                                disabled={locked}
+                                                onChange={(e) => {
+                                                    const raw = e.target.value;
+                                                    const value = raw === '' ? 0 : Math.min(Math.max(Number(raw), 0), 100);
+                                                    //토지를 비우면 현금·공공임대도 닫히므로 0 으로 되돌린다
+                                                    onContributionMixChange(
+                                                        key === 'land' && value <= 0
+                                                            ? { land: 0, public_rental: 0, cash: 0 }
+                                                            : { ...contributionMix, [key]: value }
+                                                    );
+                                                }}
+                                                className={`ml-auto ${INPUT_CLASS} disabled:cursor-not-allowed disabled:bg-gray-50`}
+                                            />
+                                            <span className="text-[11.5px] text-gray-400">%</span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={onApplyContributionMix}
+                                disabled={!contributionMixDirty || mixError !== null}
+                                className={`mt-1 w-full rounded-md py-1.5 text-[12px] font-semibold transition ${
+                                    contributionMixDirty && mixError === null
+                                        ? 'bg-gray-900 text-white hover:bg-gray-800'
+                                        : 'bg-gray-100 text-gray-400'
+                                }`}
+                            >
+                                {contributionMixDirty ? '공공기여 방식 적용' : '적용됨'}
+                            </button>
+
+                            {mixError ? (
+                                <p className="mt-1.5 text-[10.5px] leading-relaxed text-red-500">{mixError}</p>
+                            ) : (
+                                <p className="mt-1.5 text-[10.5px] leading-relaxed text-gray-400">
+                                    {serverNote ?? `${CONTRIBUTION_MIX_HINT}${contributionMixDirty ? ' 「적용」을 누르면 다시 계산합니다.' : ''}`}
+                                </p>
+                            )}
+                        </div>
+                    );
+                })()}
+
                 {/* 내 필지 지정 : 종전자산을 개인화하는 자리.
                     지정하지 않으면 구역 종전자산의 1인분이라 모든 조합원이 같은 분담금을 본다.
                     지정하면 내 토지·건물로 계산되어 "내 집이 구역 평균보다 덜 낡았나" 가 반영된다 */}
@@ -402,7 +617,7 @@ export default function ContributionPanel({
                     </div>
                 )}
 
-                <Slider sliders={visibleSliders} onChange={onSliderChange} />
+                <Slider sliders={visibleSliders} onChange={onSliderChange} onAuto={onSliderAuto} />
 
                 {/* 예측 기준 시점 */}
                 <p className="mt-1 border-t border-dashed border-gray-200 pt-2.5 text-[10.5px] leading-relaxed text-gray-400">

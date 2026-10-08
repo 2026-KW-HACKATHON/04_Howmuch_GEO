@@ -1,16 +1,29 @@
-# 월계1동 인근 아파트 분양 사례 (공급면적 ㎡당 분양가, 만원)
-# ym           : 입주자모집공고(분양) 시점
+# 월계동 인근 아파트 분양 사례 (공급면적 ㎡당 분양가, 만원)
+# 출처 : 청약홈(applyhome.co.kr) 입주자모집공고 주요정보 — 2026-10-08 다시 받음 (서울 공고 2022-01~2026-11 126건 + 2020 노원롯데캐슬시그니처)
+# ym           : 입주자모집공고일 월
 # region       : 시군구
-# price_per_m2 : 분양가 ÷ 공급면적. 전용 84㎡ 기준 공급 112.4㎡ 로 환산한 값
-# ※ 출처는 언론 보도라 단지별 타입·동호수에 따라 실제와 차이가 있을 수 있다.
-#    장위뉴타운은 월계동과 인접해 시세 흐름이 비슷하므로 같이 넣는다.
+# price_per_m2 : 84형(일반공급 세대 최다 타입) 공급금액 최고가 ÷ 공급면적(주거전용 + 주거공용). 예전 값은 112.4㎡ 고정 환산·평균가가 섞였다
+# name         : 같은 단지의 주택형(84A·B·C)은 끝의 형 표기로 구분 — 예측은 단지 단위로 묶는다 (sale_price.complex_key)
+# 범위 : 서울 동북권 6구(노원·도봉·강북·성북·중랑·동대문). 분양가상한제는 장위자이레디언트 한 곳. 고급 이상치(오티에르포레·포제스한강)와 광진·성동은 뺐다
+#    장위뉴타운은 월계동과 인접해 시세 흐름이 비슷하다. 마크원은 장위10구역이다 (예전 표기 장위4구역 정정)
 ym,name,region,price_per_m2,note
-2022-12,장위자이레디언트(장위4구역),성북구,857,"전용84 최고 10.23억 / 평당 2,834"
-2023-04,휘경자이디센시아(휘경3구역),동대문구,890,"전용84 약 10억"
-2023-08,래미안라그란데(이문1구역),동대문구,979,"전용84 약 11억"
-2023-09,이문아이파크자이(이문3구역),동대문구,1093,"전용84 최고 12.28억"
-2024-07,푸르지오라디우스파크(장위6구역),성북구,1061,"평균 평당 3,507 (범위 3,078~3,776)"
-2024-11,서울원아이파크 84A,노원구,1237,"13.9억 / 광운대역세권"
-2024-11,서울원아이파크 84B,노원구,1258,"14.14억"
-2024-11,서울원아이파크 84C,노원구,1213,"13.63억"
-2026-06,장위푸르지오마크원(장위4구역),성북구,1513,"전용84 약 17억 / 평당 5,000만원대"
+2020-07,노원롯데캐슬시그니처(상계6구역) 84A,노원구,580.2,"전용84A 6.33억 / 공급 109.10㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2020000819&pblancNo=2020000819"
+2022-01,북서울자이폴라리스(미아3구역) 84B,강북구,905.1,"전용84B 10.04억 / 공급 110.92㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2021000930&pblancNo=2021000930"
+2022-03,한화포레나미아(민간·신탁) 84A,강북구,972.4,"전용84A 11.50억 / 공급 118.27㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2022000103&pblancNo=2022000103"
+2022-11,리버센SK뷰롯데캐슬(중화1구역) 84C,중랑구,840.9,"전용84C 9.71억 / 공급 115.52㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2022000778&pblancNo=2022000778"
+2022-11,장위자이레디언트(장위4구역) 84A,성북구,904.0,"전용84A 10.23억 / 공급 113.22㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2022000835&pblancNo=2022000835"
+2023-03,휘경자이디센시아(휘경3구역) 84B,동대문구,829.5,"전용84B 9.60억 / 공급 115.73㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2023000067&pblancNo=2023000067"
+2023-04,엘리프미아역2단지(민간) 84A,강북구,953.7,"전용84A 11.43억 / 공급 119.81㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2023000145&pblancNo=2023000145"
+2023-08,래미안라그란데(이문1구역) 84A,동대문구,962.4,"전용84A 10.99억 / 공급 114.19㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2023000382&pblancNo=2023000382"
+2023-09,e편한세상답십리아르테포레(국민주택) 84A,동대문구,1012.2,"전용84A 11.56억 / 공급 114.21㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2023000438&pblancNo=2023000438"
+2023-10,도봉금호어울림리버파크(도봉2구역) 84B,도봉구,828.7,"전용84B 9.03억 / 공급 109.00㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2023000555&pblancNo=2023000555"
+2023-10,이문아이파크자이(이문3구역) 84A,동대문구,1050.4,"전용84A 12.06억 / 공급 114.81㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2023000548&pblancNo=2023000548"
+2024-07,푸르지오라디우스파크(장위6구역) 84D,성북구,1105.1,"전용84D 12.11억 / 공급 109.58㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2024000284&pblancNo=2024000284"
+2024-11,서울원아이파크(광운대역세권) 84A,노원구,1204.0,"전용84A 13.90억 / 공급 115.45㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2024000659&pblancNo=2024000659"
+2024-11,서울원아이파크(광운대역세권) 84B,노원구,1223.5,"전용84B 최고가 ÷ 공급면적 / 같은 공고 / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2024000659&pblancNo=2024000659"
+2024-11,서울원아이파크(광운대역세권) 84C,노원구,1180.6,"전용84C 최고가 ÷ 공급면적 / 같은 공고 / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2024000659&pblancNo=2024000659"
+2024-11,창경궁롯데캐슬시그니처(삼선5구역) 84,성북구,1245.1,"전용84 13.90억 / 공급 111.63㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2024000692&pblancNo=2024000692"
+2024-12,더샵퍼스트월드(상봉터미널·재정비촉진) 84C,중랑구,1124.8,"전용84C 13.49억 / 공급 119.94㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2024000718&pblancNo=2024000718"
+2025-09,상봉센트럴아이파크(민간) 84C,중랑구,1178.8,"전용84C 13.81억 / 공급 117.15㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2025000439&pblancNo=2025000439"
+2026-06,장위푸르지오마크원(장위10구역) 84B,성북구,1455.1,"전용84B 17.24억 / 공급 118.49㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000275&pblancNo=2026000275"
+2026-07,월계중흥S-클래스리비에르(월계동 재건축) 84A,노원구,1359.5,"전용84A 14.99억 / 공급 110.27㎡ / https://www.applyhome.co.kr/ai/aia/selectAPTLttotPblancDetail.do?houseManageNo=2026000355&pblancNo=2026000355"

@@ -1,7 +1,14 @@
 from dataclasses import dataclass, replace
 
 from AI.engine.prior_asset import BuildingSpec, building_value
-from AI.engine.rental_cost import standard_build_cost_per_m2
+from AI.engine.rental_cost import (
+    UPLIFT_BASIS,
+    UPLIFT_RATIO,
+    takeover_basement_price_per_m2,
+    takeover_price_per_m2,
+    uplift_takeover_basement_price_per_m2,
+    uplift_takeover_price_per_m2,
+)
 from AI.engine.schema import(
     PER_PYEONG_TO_PER_M2,
     ProjectParams,
@@ -54,6 +61,7 @@ def estimate_prior_asset(owner: OwnerInput) -> float:
                 structure=owner.building_structure or "",
                 floor_area_m2=owner.building_area_m2,
                 elapsed_years=owner.building_elapsed_years,
+                cost_index=owner.building_cost_index,
             ),
             owner.replacement_cost_per_m2,
         ) * owner.exclusive_share
@@ -100,13 +108,31 @@ PARKING_AREA_PER_CAR_M2 = 35.0
 UNDERGROUND_ETC_PER_HOUSEHOLD_M2 = 11.1
 
 
+#법정 주차대수 — 「주택건설기준 등에 관한 규정」 제27조 제1항 (특별시)
+#  ① 주택 전용면적 합계 기준 : 85㎡ 이하 1대/75㎡, 85㎡ 초과 1대/65㎡
+#  ② 세대당 1대 이상 (세대당 전용면적 60㎡ 이하면 0.7대)
+#  두 조건을 모두 채워야 하므로 합계끼리 비교한다 (세대마다 큰 값을 골라 더하면 과대해진다).
+#  임대 세대도 같은 단지의 주택이라 포함한다 — 여유율도 임대 포함 단지 전체로 쟀다
+def legal_parking_count(unit_types: list[UnitType], rental_count: int, rental_exclusive_m2: float) -> float:
+    homes = [(u.exclusive_area_m2, u.count) for u in unit_types] + [(rental_exclusive_m2, rental_count)]
+    area_based = sum((area / 75 if area <= 85 else area / 65) * count for area, count in homes)
+    minimum = sum((0.7 if area <= 60 else 1.0) * count for area, count in homes)
+    return max(area_based, minimum)
+
+
 def calc_construction_cost(params: ProjectParams, areas: Areas, alloc: "Allocation") -> Costs:
-    #지하 연면적 : 지상 대비 비율(기존 0.6)이 아니라 세대수 × 주차대수로 쌓는다.
-    #  주차대수가 지하 규모를 결정하므로 사용자가 조절할 수 있는 값이 되어야 한다
-    household_count = sum(u.count for u in alloc.unit_types) + alloc.rental_count
-    underground_m2 = household_count * (
-        params.parking_per_household * PARKING_AREA_PER_CAR_M2
-        + UNDERGROUND_ETC_PER_HOUSEHOLD_M2
+    #지하 연면적 = 주차대수 × 1대당 면적 + 세대수 × 기타(기계실·창고·커뮤니티).
+    #  주차대수 = 평형 구성에서 계산한 법정 대수 × 여유율 (여유율이 슬라이더다)
+    #  임대(의무·완화분)와 공공기여로 기부채납하는 공공임대도 같은 단지의 세대다
+    rental_homes = alloc.rental_count + alloc.donated_rental_count
+    household_count = sum(u.count for u in alloc.unit_types) + rental_homes
+    parking_count = (
+        legal_parking_count(alloc.unit_types, rental_homes, params.rental_exclusive_area_m2)
+        * params.parking_margin
+    )
+    underground_m2 = (
+        parking_count * PARKING_AREA_PER_CAR_M2
+        + household_count * UNDERGROUND_ETC_PER_HOUSEHOLD_M2
     )
     gross_m2 = areas.ground_m2 + underground_m2
 
@@ -119,6 +145,8 @@ def calc_construction_cost(params: ProjectParams, areas: Areas, alloc: "Allocati
     #  0.25(공사비 80%) ~ 0.45(공사비 69%) 라서 슬라이더를 그 폭으로 잡았고,
     #  기본값 0.35 는 공사비 비중 74% 에 해당한다 (사례 76.9% 와 통상 하단 70% 의 사이)
     all_cost = construction_cost * (1 + params.other_cost_ratio)                        # 총 사업비
+    #공공기여를 현금으로 낸 몫 (토지 + 현금 방식). 사업시행인가 시점 금액에 고정한다
+    all_cost += params.contribution_cash
 
     return Costs(construction_cost_m2, underground_m2, gross_m2, construction_cost, all_cost)
 
@@ -126,8 +154,18 @@ def calc_construction_cost(params: ProjectParams, areas: Areas, alloc: "Allocati
 @dataclass
 class Allocation:
     unit_types : list[UnitType]   # 평형별 세대수
-    rental_count : int            # 임대 세대수
+    rental_count : int            # 임대 세대수 (의무 임대 + 제54조 완화분)
     sale_supply_m2 : float        # 분양 공급면적 합계
+    #임대 중 의무 임대 세대수. 나머지(rental_count − 이 값)가 제54조 완화분이다.
+    #  건물 단가(의무 = 기본형건축비 80%, 완화분 = 표준건축비)와 부속토지(의무 = 감정가, 완화분 = 기부채납)가 다르다
+    base_rental_count : int = 0
+    #공공기여로 기부채납하는 공공임대 세대수 (공공임대 건축물 방식). rental_count 에 넣지 않는다 — 인수대금이 없다
+    donated_rental_count : int = 0
+
+    #제54조 용적률 완화분 임대 세대수
+    @property
+    def uplift_rental_count(self) -> int:
+        return self.rental_count - self.base_rental_count
 
 def calc_allocation(params: ProjectParams, areas: Areas) -> Allocation:
     supply_total_m2 = areas.supply_total_m2     # 주택 공급면적 합계
@@ -139,14 +177,19 @@ def calc_allocation(params: ProjectParams, areas: Areas) -> Allocation:
     base_supply_m2 = supply_total_m2 * base_share                     # 기준 구간 공급면적
     uplift_supply_m2 = supply_total_m2 - base_supply_m2               # 완화 구간 공급면적
 
-    rent_target_m2 = (
-        base_supply_m2 * params.base_rental_ratio
-        + uplift_supply_m2 * params.uplift_rental_share
-    )                                                                  # 임대로 공급해야 할 면적
+    base_rent_m2 = base_supply_m2 * params.base_rental_ratio           # 의무 임대 면적
+    uplift_rent_m2 = uplift_supply_m2 * params.uplift_rental_share     # 제54조 완화분 임대 면적
+    rent_target_m2 = base_rent_m2 + uplift_rent_m2                     # 임대로 공급해야 할 면적
 
     rental_count = int(rent_target_m2 / params.rental_supply_area_m2)  # 임대 세대수 (내림)
+    #의무 임대만 따로 센다 — 부속토지 인수 조건이 완화분과 달라서다 (calc_post_asset).
+    #  내림은 합계에서 한 번 하고, 의무분도 내림한 나머지를 완화분으로 본다 (어긋나도 1세대 이내)
+    base_rental_count = min(int(base_rent_m2 / params.rental_supply_area_m2), rental_count)
     rent_total_m2 = rental_count * params.rental_supply_area_m2        # 내림한 세대수로 면적 재계산
-    sale_supply_m2 = supply_total_m2 - rent_total_m2                   # 분양 공급면적
+    #공공기여 기부채납 공공임대 (공공임대 건축물 방식) : 의무·완화분 임대와 별개로 떼어 둔다
+    donated_rental_count = params.donated_rental_count
+    donated_m2 = donated_rental_count * params.rental_supply_area_m2
+    sale_supply_m2 = max(supply_total_m2 - rent_total_m2 - donated_m2, 0.0)   # 분양 공급면적
 
     # 평형별 세대수
     unit_types = []
@@ -157,7 +200,9 @@ def calc_allocation(params: ProjectParams, areas: Areas) -> Allocation:
     return Allocation(
         unit_types,
         rental_count,
-        sale_supply_m2
+        sale_supply_m2,
+        base_rental_count=base_rental_count,
+        donated_rental_count=donated_rental_count,
     )
 
 # 종후 자산(총 수입)
@@ -166,35 +211,77 @@ class Revenues:
     member_share : float        # 분양 세대 중 조합원 비율
     blended_price_m2 : float    # 조합원/일반 가중 평균 분양가(만원/㎡)
     housing_revenue : float     # 주택 분양수입
-    rental_revenue : float      # 임대 인수가 수입
+    rental_revenue : float      # 임대 인수수입 합계 (건물 + 의무 임대 부속토지)
     commercial_revenue : float  # 상가 분양수입
     total_post_asset : float    # 종후자산 총액
+    rental_building_revenue : float = 0.0   # 임대 건물 인수대금 합계 (의무 + 완화분)
+    rental_land_revenue : float = 0.0       # 의무 임대 부속토지 인수대금 (감정가)
+    rental_land_area_m2 : float = 0.0       # 의무 임대 부속토지 면적(㎡)
+    rental_base_building_revenue : float = 0.0    # 의무 임대 건물 (기본형건축비 지상층 + 지하층의 80%)
+    rental_uplift_building_revenue : float = 0.0  # 제54조 완화분 건물 (표준건축비, 지하층 63%)
+    rental_underground_m2 : float = 0.0           # 임대 몫 지하층면적(㎡)
 
-def calc_post_asset(params: ProjectParams, areas: Areas, alloc: Allocation) -> Revenues:
+def calc_post_asset(params: ProjectParams, areas: Areas, alloc: Allocation, costs: Costs | None = None) -> Revenues:
     sale_count = sum(u.count for u in alloc.unit_types)              # 분양 세대수
     if sale_count <= 0:
         raise ValueError("분양 세대수가 0 입니다.")
 
     # 조합원이 평형 비율대로 배정된다고 가정 → 조합원분양가와 일반분양가의 가중 평균
     member_share = min(params.member_count / sale_count, 1)
+    #조합원 몫은 관리처분 시점 가격(시점 계수), 일반분양 몫은 분양 공고 시점 가격이다
     blended_price_m2 = params.general_price_per_m2 * (
-        member_share * params.member_price_ratio + (1 - member_share)
+        member_share * params.member_price_ratio * params.member_price_time_factor
+        + (1 - member_share)
     )
 
-    # 내림으로 세대수를 정했으므로 면적도 세대수에서 다시 합산
+    # 내림으로 세대수를 정했으므로 면적도 세대수에서 다시 합산.
+    #  주택형마다 ㎡당 분양가가 다르다 (size_price_index, 84형 = 1.00) → 공급면적에 지수를 곱해 더한다
     sale_supply_m2 = sum(u.count * u.supply_area_m2 for u in alloc.unit_types)
-
-    housing_revenue = sale_supply_m2 * blended_price_m2
-    #임대 인수수입 (도시정비법 제55조) : 세대당 정액이 아니라 공급면적 × 표준건축비.
-    #  표는 전용면적으로 행을 고르고 단가는 공급면적에 곱한다(국토부고시 제2023-64호 주석).
-    rental_supply_m2 = alloc.rental_count * params.rental_supply_area_m2
-    #  표준건축비는 2023년 고시값이라 관리처분 시점까지 밀어야 한다 (rental_cost_multiplier).
-    #  밀지 않으면 분양가·공사비만 커져 임대 비중이 저절로 작아지고 종후자산이 과소평가된다
-    rental_revenue = (
-        rental_supply_m2
-        * standard_build_cost_per_m2(params.rental_floor_band, params.rental_exclusive_area_m2)
-        * params.rental_cost_multiplier
+    priced_supply_m2 = sum(
+        u.count * u.supply_area_m2 * size_price_index(u.exclusive_area_m2) for u in alloc.unit_types
     )
+
+    housing_revenue = priced_supply_m2 * blended_price_m2
+    #임대 인수수입 ① 건물 : 세대당 정액이 아니라 (임대 공급면적 × 지상층 단가 + 임대 몫 지하층면적 × 지하층 단가).
+    #  의무 임대와 제54조 완화분은 단가가 다르다 (rental_cost 참조)
+    #    · 의무 임대    : 기본형건축비(지상층 + 지하층)의 80% — 시행령 제68조②1 (2025-03-18 시행)
+    #    · 제54조 완화분 : 표준건축비, 지하층은 그 63% — 도시정비법 제55조② · 서울시 매입기준
+    #  표는 전용면적으로 행을 고르고 지상층 단가는 공급면적에 곱한다 (고시 표 머리).
+    #  지하층면적 = 지하 연면적을 주택 공급면적(분양 + 임대) 비로 나눈 임대 몫
+    #    (계약면적의 그 밖의 공용면적처럼 나눈다. 지하주차장 포함 — 기본형건축비·서울시 매입기준 정의 모두)
+    rental_supply_m2 = alloc.rental_count * params.rental_supply_area_m2
+    base_rental_supply_m2 = alloc.base_rental_count * params.rental_supply_area_m2
+    uplift_rental_supply_m2 = rental_supply_m2 - base_rental_supply_m2
+    if costs is None:
+        costs = calc_construction_cost(params, areas, alloc)
+    #  기부채납 공공임대(공공기여)도 지하층·대지를 나눠 갖는다 — 인수대금은 없다
+    housing_supply_m2 = sale_supply_m2 + rental_supply_m2 + alloc.donated_rental_count * params.rental_supply_area_m2
+    base_rental_underground_m2 = costs.underground_m2 * base_rental_supply_m2 / housing_supply_m2
+    uplift_rental_underground_m2 = costs.underground_m2 * uplift_rental_supply_m2 / housing_supply_m2
+    #  단가는 고시 월 값이라 시점까지 민다.
+    #    의무 임대 : 일반분양 공고 시점까지 건설공사비지수로 (rental_cost_multiplier)
+    #    완화분    : 인수 시점까지 표준건축비 개정 실측 인상률로 (uplift_rental_cost_multiplier)
+    #  밀지 않으면 분양가·공사비만 커져 임대 비중이 저절로 작아지고 종후자산이 과소평가된다
+    band, exclusive = params.rental_floor_band, params.rental_exclusive_area_m2
+    rental_base_building_revenue = (
+        base_rental_supply_m2 * takeover_price_per_m2(band, exclusive)
+        + base_rental_underground_m2 * takeover_basement_price_per_m2()
+    ) * params.rental_cost_multiplier
+    rental_uplift_building_revenue = (
+        uplift_rental_supply_m2 * uplift_takeover_price_per_m2(band, exclusive)
+        + uplift_rental_underground_m2 * uplift_takeover_basement_price_per_m2(band, exclusive)
+    ) * params.uplift_rental_cost_multiplier
+    rental_building_revenue = rental_base_building_revenue + rental_uplift_building_revenue
+    #임대 인수수입 ② 부속토지 : 의무 임대만 감정가로 인수한다. 제54조 완화분은 기부채납(무상)이라 0.
+    #  감정가 기준시점은 사업시행계획인가 고시일 → 종전자산 토지분과 같은 시점·방법이라
+    #  라우터가 그 ㎡당 값을 넘긴다 (rental_land_price_per_m2). 인수 시점까지 밀지 않는다.
+    #  부속토지 면적 = 건축 대지 × (의무 임대 공급면적 ÷ 주택 공급면적 합계(분양 + 임대))
+    #    · site_area_m2 는 공공기여를 뺀 건축 대지다 (라우터가 넘기는 값)
+    #    · 상가 몫은 따로 떼지 않았다 (상가 비율 기본 2%) — 그만큼 의무 임대 몫이 약간 크게 잡힌다
+    #  sale_count > 0 을 위에서 확인했으므로 분모는 0 이 아니다
+    rental_land_area_m2 = params.site_area_m2 * base_rental_supply_m2 / housing_supply_m2
+    rental_land_revenue = rental_land_area_m2 * params.rental_land_price_per_m2
+    rental_revenue = rental_building_revenue + rental_land_revenue
     #상가 분양수입 : 주택 분양가 × 배수. 배수 0.7 은 기존 상가 실거래 0.48 에 신축 프리미엄을 얹은 값
     #  서울 10개 구 실거래에서 아파트가 비쌀수록 배수가 낮아진다(마포 0.36 / 노원 0.49) → 비례 가정은
     #  엄밀하지 않다. 상가 ㎡당 분양가 직접 예측으로 전환 예정(상가 수입은 종후자산의 약 5%, 우선순위 낮음)
@@ -210,7 +297,17 @@ def calc_post_asset(params: ProjectParams, areas: Areas, alloc: Allocation) -> R
         rental_revenue,
         commercial_revenue,
         total_post_asset,
+        rental_building_revenue=rental_building_revenue,
+        rental_land_revenue=rental_land_revenue,
+        rental_land_area_m2=rental_land_area_m2,
+        rental_base_building_revenue=rental_base_building_revenue,
+        rental_uplift_building_revenue=rental_uplift_building_revenue,
+        rental_underground_m2=base_rental_underground_m2 + uplift_rental_underground_m2,
     )
+
+
+#제54조 완화분 건물 단가 이름 (경고 문구용). 현행 법 제55조② 는 표준건축비, 개정안이 반영되면 기본형건축비 비율
+UPLIFT_TAKEOVER_TEXT = UPLIFT_BASIS if UPLIFT_RATIO == 1 else f"{UPLIFT_BASIS}의 {UPLIFT_RATIO:.0%}"
 
 
 # 사업 전체 수지 → 비례율
@@ -219,7 +316,7 @@ def calc_project(params: ProjectParams, alloc: Allocation) -> ProjectResult:
 
     areas = calc_area(params)
     costs = calc_construction_cost(params, areas, alloc)
-    revenues = calc_post_asset(params, areas, alloc)
+    revenues = calc_post_asset(params, areas, alloc, costs)
 
     # 비례율 : 사업 수지로 계산한다. 고정 입력 모드는 두지 않는다.
     #   비례율을 슬라이더로 두면 공사비·분양가·용적률을 움직여도 분담금이 따라오지 않아
@@ -247,27 +344,27 @@ def calc_project(params: ProjectParams, alloc: Allocation) -> ProjectResult:
 
     used_supply_m2 = (
         sum(u.count * u.supply_area_m2 for u in alloc.unit_types)
-        + alloc.rental_count * params.rental_supply_area_m2
+        + (alloc.rental_count + alloc.donated_rental_count) * params.rental_supply_area_m2
     )
     if used_supply_m2 > areas.ground_m2:
         warnings.append("공급면적 합계가 지상 연면적을 초과합니다. 세대수/평형을 확인하세요.")
 
-    # 용적률 상향 안내 : 올렸는데 분담금이 늘어나는 이유를 알려준다
-    #   도시정비법 제54조에 따라 완화 용적률의 50% 를 임대로 공급해야 하는데,
-    #   임대 인수가는 표준건축비(분양가의 약 11%)뿐이라 완화분의 수입이 크게 깎인다.
-    #   게다가 임대 1세대 면적이 작아 세대수가 더 빨리 늘고, 지하(세대수 비례)가 같이 커진다.
-    #   → 모델상으로는 용적률을 올릴수록 사업성이 나빠진다. 계산은 일관되지만 직관과 반대라 알린다.
-    #   서울시가 2024년 "사업성 보정계수"를 만든 이유가 바로 이 구조다
-    #   (임대 부담 없이 허용용적률을 올려준다). 그 제도는 아직 반영하지 않았다 → ROADMAP [6]
+    # 법적상한 구간 안내 (도시정비법 제54조)
+    #   제54조④ 초과용적률 = 법적상한용적률 − 정비계획으로 정하여진 용적률.
+    #   재개발은 그 초과분의 50~75% 를 국민주택규모 임대로 지어야 한다 (uplift_rental_share).
+    #   far_base 는 정비계획 용적률의 최대(4단의 상한, 없으면 조례)이므로,
+    #   그보다 높은 용적률을 고른 경우에만 이 임대 의무가 붙는다.
+    #   기준 → 허용 → 상한은 인센티브·공공기여 구간이라 여기에 해당하지 않는다.
+    #   ※ 예전 문구는 "기준보다 올리면 50% 임대" 였는데 조문을 잘못 읽은 것이었다 (2026-10-07 정정)
     if params.floor_area_ratio > params.far_base:
-        uplift_share = 1 - params.far_base / params.floor_area_ratio
+        excess = params.floor_area_ratio - params.far_base
         rental_share = alloc.rental_count * params.rental_supply_area_m2 / areas.supply_total_m2
         warnings.append(
-            f"용적률을 기준({params.far_base:.0f}%)보다 {uplift_share:.0%} 올리면 "
-            f"완화분의 {params.uplift_rental_share:.0%}를 임대로 공급해야 해 "
-            f"임대 비중이 {rental_share:.0%}까지 올라갑니다(도시정비법 제54조). "
-            "임대는 표준건축비로만 인수되어 분담금이 오히려 늘 수 있습니다. "
-            "서울시 사업성 보정계수(임대 부담 없는 허용용적률 상향)는 아직 반영되지 않았습니다."
+            f"정비계획 상한({params.far_base:.0f}%)을 넘는 법적상한 구간입니다. "
+            f"초과 용적률 {excess:.0f}%p 의 {params.uplift_rental_share:.0%}를 국민주택규모 임대로 "
+            f"공급해야 해 임대 비중이 {rental_share:.0%}까지 올라갑니다(도시정비법 제54조). "
+            f"이 임대는 건물값({UPLIFT_TAKEOVER_TEXT})만 받고 부속토지는 기부채납해 "
+            "늘어난 연면적만큼 수입이 늘지 않습니다."
         )
 
     # 비례율 경고 : 벗어난 정도에 따라 단계를 나눈다
@@ -295,6 +392,23 @@ def calc_project(params: ProjectParams, alloc: Allocation) -> ProjectResult:
         proportional_rate=proportional_rate,
         warnings=warnings,
     )
+
+
+#관리처분 비례율을 목표값으로 맞추는 조합원분양가 비율 (기본 방식)
+#  조합은 관리처분계획에서 조합원분양가를 정해 비례율을 맞춘다. 비율을 고정하면(예전 0.8)
+#  비례율이 결과로 튀어 250~300% 가 나왔고, 개발이익이 종전자산 비례로만 나뉘었다.
+#  비례율 = (종후 − 사업비) ÷ 종전 에서 비율에 따라 움직이는 건 종후의 조합원분양 수입뿐이다
+#  (사업비·일반분양·임대·상가는 비율과 무관) → 비례율은 비율의 1차 함수다.
+#  두 점(0, 1)의 비례율로 직선을 풀면 정확히 나온다 — 반복 계산이 필요 없다.
+#  params 는 관리처분 확정 단계(모든 항목이 고시일 시점)여야 한다. 범위 제한은 부르는 쪽이 한다.
+#  조합원 몫이 없어 기울기가 0 이면 풀 수 없다 → None
+def solve_member_price_ratio(params: ProjectParams, alloc: Allocation, target_rate: float) -> float | None:
+    rate_at_zero = calc_project(replace(params, member_price_ratio=0.0), alloc).proportional_rate
+    rate_at_one = calc_project(replace(params, member_price_ratio=1.0), alloc).proportional_rate
+    slope = rate_at_one - rate_at_zero
+    if slope <= 1e-9:
+        return None
+    return (target_rate - rate_at_zero) / slope
 
 
 
@@ -334,11 +448,39 @@ def member_count_range(
         capped=raw_max > sale_count,
     )
 
+# 주택형별 일반분양가 지수 (공급면적 ㎡당, 84형 = 1.00) — 슬라이더의 ㎡당 일반분양가는 84형 기준이다
+#  청약홈 입주자모집공고 2022-01~2026-11 서울 동북권 6구 17단지 : 단지마다 (전용 밴드 안 타입의 세대가중 ㎡당 ÷ 84형 ㎡당) 을 내고
+#  단지 간 중앙값을 쓴다 (39형 9단지 · 49형 9 · 59형 17 · 74형 8 · 99형 8 · 114형 5).
+#  공급㎡ 기준이라 59형만 비싸다(1.048). 39·49형은 공용면적 비중이 커(공급/전용 1.40, 84형 1.36) 84형보다 낮거나 같다.
+#  사이 면적은 직선으로 잇고, 바깥은 끝값 (134형 이상은 동북권 자료 없음 → 114형 값)
+SIZE_PRICE_INDEX = [(39.0, 0.935), (49.0, 0.991), (59.0, 1.048), (74.0, 0.987), (84.0, 1.000), (99.0, 1.008), (114.0, 0.976)]
+
+
+def size_price_index(exclusive_m2: float) -> float:
+    points = SIZE_PRICE_INDEX
+    if exclusive_m2 <= points[0][0]:
+        return points[0][1]
+    if exclusive_m2 >= points[-1][0]:
+        return points[-1][1]
+    for (lo_area, lo_value), (hi_area, hi_value) in zip(points, points[1:]):
+        if lo_area <= exclusive_m2 <= hi_area:
+            return lo_value + (hi_value - lo_value) * (exclusive_m2 - lo_area) / (hi_area - lo_area)
+    return 1.0
+
+
 # 희망 평형의 조합원분양가 (만원)
 def member_price(params: ProjectParams, unit_types: list[UnitType], unit_name: str) -> float:
     for unit in unit_types:
         if unit.name == unit_name:
-            return unit.supply_area_m2 * params.general_price_per_m2 * params.member_price_ratio
+            #조합원분양가는 관리처분계획에서 확정된다 → 시점 계수로 관리처분 시점 값에 묶는다
+            #  주택형별 ㎡당 지수를 곱한다 (조합원분양가 = 그 주택형 일반분양가 × 비율)
+            return (
+                unit.supply_area_m2
+                * params.general_price_per_m2
+                * size_price_index(unit.exclusive_area_m2)
+                * params.member_price_ratio
+                * params.member_price_time_factor
+            )
     raise ValueError(f"존재하지 않는 평형입니다: {unit_name}")
 
 
@@ -366,9 +508,17 @@ def unit_options(params: ProjectParams, alloc: Allocation) -> list[UnitOption]:
 #  전용률은 UNIT_MIX 실측값에서만 가져온다 (재개발 신축 7개 단지 건축물대장 전유공용면적)
 #    전용 59 → 공급 83.4㎡ (70.74%) / 84 → 112.6 (74.60%) / 114 → 153.9 (74.07%)
 #  코어·복도 면적이 거의 고정이라 소형일수록 전용률이 낮다.
+#  소형 2점 추가 (2026-10-08) : 강북권 2015년 이후 준공 21개 단지 건축물대장 전유공용면적 호별 실측
+#    (주거공용 = 지상·각층 공용 중 주용도 아파트·공동주택, 주차·기계·전기·관리·주민시설 제외. 단지별 중앙값의 중앙)
+#    전용 40㎡ 0.661 (13개 단지) — 임대 실측 39/59 = 0.661 과 같다 / 46㎡ 0.671 (14개 단지).
+#    예전에는 59㎡ 미만도 70.7% 로 써서 소형 공급면적이 약 6% 작게 잡혔다.
+#    같은 실측에서 60㎡ 0.729 · 85㎡ 0.761 은 기존 점(70.7% · 74.6%, 공급 83.4 · 112.6㎡)과 공급면적 기준 1% 안이라 그대로 둔다.
+#    대형(122㎡ 0.801 · 149㎡ 0.807)은 단지가 2~3개뿐이고 기존 114㎡ 점과 어긋나 넣지 않았다 (scratchpad/exclusive_ratio_bands.json)
 #  측정점 사이는 선형보간하고, 바깥은 가장 가까운 측정점의 전용률을 그대로 쓴다
 #  (측정 범위를 벗어난 평형은 추정이다. 사례가 쌓이면 아래 점들을 갱신할 것)
 EXCLUSIVE_RATIO_POINTS = [
+    (40.0, 0.661),
+    (46.0, 0.671),
     (59.0, 59.0 / 83.4),
     (84.0, 84.0 / 112.6),
     (114.0, 114.0 / 153.9),
@@ -399,10 +549,24 @@ def supply_area_from_exclusive(exclusive_m2: float) -> float:
     return exclusive_m2 / exclusive_ratio(exclusive_m2)
 
 
+# 임대 전용면적 → 공급면적 (㎡)
+#  소형 임대(전용 39㎡ 실측 39/59 = 0.661)와 분양 전용률 곡선(59㎡ 이상) 사이를 직선으로 잇는다.
+#  서울시 공공임대 사회혼합 기준으로 임대가 분양과 같은 평형으로 섞이면 공급면적도 분양과 같다
+#  (미미삼 정비계획(안) 노원구 공고 제2026-567호 : 공공주택 452 = 59.98㎡ 362 + 84.98㎡ 90,
+#   "조합원 주택을 포함한 전체 주택을 대상으로 추첨" → 평균 공급 90.4㎡. 예전 한 점(0.661)이면 98.3㎡ 로 공공주택이 −11.7%)
 def rental_supply_from_exclusive(exclusive_m2: float) -> float:
     if exclusive_m2 <= 0:
         raise ValueError("임대 전용면적은 0보다 커야 합니다")
-    return exclusive_m2 / RENTAL_EXCLUSIVE_RATIO
+    small_area, small_ratio = 39.0, RENTAL_EXCLUSIVE_RATIO
+    sale_area = EXCLUSIVE_RATIO_POINTS[0][0]
+    if exclusive_m2 >= sale_area:
+        ratio = exclusive_ratio(exclusive_m2)
+    elif exclusive_m2 <= small_area:
+        ratio = small_ratio
+    else:
+        t = (exclusive_m2 - small_area) / (sale_area - small_area)
+        ratio = small_ratio + (exclusive_ratio(sale_area) - small_ratio) * t
+    return exclusive_m2 / ratio
 
 
 # 세대수 비율 입력 → UnitMix (면적 몫)

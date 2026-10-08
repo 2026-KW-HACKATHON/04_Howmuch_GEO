@@ -185,3 +185,72 @@ def predict_cost_per_pyeong(
         slider_max=round(predicted * (1 + SLIDER_MARGIN), 1),
         warnings=warnings,
     )
+
+
+
+#계약단가가 건설공사비지수(투입원가)보다 빠르게 오르는 몫 — 확정 이후 "비물가" 증액
+#  = 도급계약 사례의 로그선형 연율 − 같은 기간 지수의 로그선형 연율
+#  ※ 기간을 반드시 맞춘다. 사례 연율을 지수의 20년 평균 연율과 비교하면, 사례 기간에만 있는
+#    지수 급등(2021~22)이 초과분으로 잘못 잡힌다 (노원 사례 2016~2025 : 사례 6.76% vs 같은 기간 지수
+#    5.33% → 초과 1.42%/년. 20년 평균 3.97% 와 비교하면 2.79%/년으로 두 배 부풀려진다 — 2026-10-07 정정)
+#  지역 사례가 REGION_MIN_CASES 미만이면 서울 전체 사례로 계산한다 (예측과 같은 규칙)
+#  음수면 0 으로 둔다 — 확정 이후 공사비가 계약보다 내려가는 일은 드물다
+@dataclass
+class ExcessRate:
+    rate: float         # 적용 초과 연율 (0 이상)
+    case_rate: float    # 사례 계약단가 연율
+    index_rate: float   # 같은 기간 지수 연율
+    case_count: int
+    basis: str          # 지역명 또는 "서울 전체"
+    span: str           # 사례 기간 "YYYY-MM~YYYY-MM"
+
+
+def _loglinear_rate(points: list[tuple[float, float]]) -> float:
+    #(연, 값) → 연율. 최소자승 기울기를 연율로 바꾼다
+    import math
+    n = len(points)
+    xs = [x for x, _ in points]
+    ys = [math.log(y) for _, y in points]
+    mx, my = sum(xs) / n, sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs)
+    if sxx <= 0:
+        return 0.0
+    slope = sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / sxx
+    return math.exp(slope) - 1
+
+
+def contract_excess_rate(
+    region: str | None = None,
+    cases: list[CostCase] | None = None,
+    index: dict[str, float] | None = None,
+) -> ExcessRate:
+    cases = cases if cases is not None else load_cases()
+    index = index if index is not None else load_index()
+
+    basis = "서울 전체"
+    if region:
+        local = [c for c in cases if c.region == region]
+        if len(local) >= REGION_MIN_CASES:
+            cases, basis = local, region
+
+    def year(ym: str) -> float:
+        y, m = ym.split("-")[:2]
+        return int(y) + (int(m) - 1) / 12
+
+    if len(cases) < 3:
+        return ExcessRate(0.0, 0.0, 0.0, len(cases), basis, "")
+
+    first = min(c.ym for c in cases)
+    last = max(c.ym for c in cases)
+    case_rate = _loglinear_rate([(year(c.ym), c.cost_per_pyeong) for c in cases])
+    window = [(year(k), v) for k, v in index.items() if first <= k <= last and v > 0]
+    index_rate = _loglinear_rate(window) if len(window) >= 3 else case_rate
+
+    return ExcessRate(
+        rate=max(case_rate - index_rate, 0.0),
+        case_rate=case_rate,
+        index_rate=index_rate,
+        case_count=len(cases),
+        basis=basis,
+        span=f"{first}~{last}",
+    )

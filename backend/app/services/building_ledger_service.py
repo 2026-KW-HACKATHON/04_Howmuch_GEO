@@ -5,9 +5,11 @@
 #   건물분을 빼면 개인·구역에 같은 배수가 들어가 분담금에서 약분된다 (수치로 확인했다).
 #   여기서 받아오는 값이 그 약분을 깨는 유일한 실체다.
 #
-# 두 엔드포인트를 쓴다
+# 엔드포인트
 #   getBrTitleInfo          표제부   — 연면적·구조·사용승인일·세대수 (동별)
 #   getBrExposPubuseAreaInfo 전유공용 — 호별 전유면적. 집합건물에서 내 몫을 나누는 데 쓴다
+#   getBrRecapTitleInfo     총괄표제부 — 단지 공식 세대수·용적률 산정 연면적 (아파트 필지만, 재건축 판정·계산)
+#   getBrAtchJibunInfo      부속지번 — 건물 없이 단지에 묶인 필지 (아파트 필지만, 재건축 판정)
 #
 # PNU(19자리) → 건축물대장 파라미터
 #   PNU = 법정동코드(10) + 필지구분(1) + 본번(4) + 부번(4)
@@ -27,6 +29,11 @@ logger = logging.getLogger(__name__)
 
 TITLE_URL = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrTitleInfo"
 EXPOS_URL = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrExposPubuseAreaInfo"
+RECAP_URL = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrRecapTitleInfo"
+ATCH_URL = "https://apis.data.go.kr/1613000/BldRgstHubService/getBrAtchJibunInfo"
+
+#부속지번은 표제부(동)마다 같은 지번이 반복된다 (미미삼 13번지 = 44행, 모두 17번지). 몇 페이지면 충분하다
+MAX_ATCH_PAGES = 5
 
 #한 필지에 동·호가 많을 수 있다. 단독주택은 1~3건, 대단지 아파트는 한 필지에 8개 동도 있다
 #  ※ pageNo 를 보내지 않으면 이 API 는 numOfRows 를 무시하고 1건만 돌려준다 (실측).
@@ -84,6 +91,8 @@ class BuildingLedger:
     household_count: int = 1          # 세대·가구 수. 조합원 수 실측에 쓴다
     is_condo: bool = False            # 집합건물 여부 (한 필지에 조합원이 여럿)
     main_purpose: str = ""            # 주용도
+    etc_purpose: str = ""             # 기타용도 (공동주택이면 아파트·다세대주택 등)
+    floors: int = 0                   # 지상층수 (대표 동). 공동주택에서 아파트(주택 5개 층 이상)를 가른다
     has_building: bool = False        # False 면 나대지 → 건물분 0
     fallback: bool = False            # 조회 실패. 건물분을 못 구한 상태
     warnings: list[str] = field(default_factory=list)
@@ -246,6 +255,8 @@ def fetch_building(pnu: str, as_of: date | None = None) -> BuildingLedger:
     main = max(titles, key=lambda row: _f(row.get("totArea")))
     result.structure = (main.get("strctCdNm") or "").strip()
     result.main_purpose = (main.get("mainPurpsCdNm") or "").strip()
+    result.etc_purpose = (main.get("etcPurps") or "").strip()
+    result.floors = _i(main.get("grndFlrCnt"))
     result.approval_ymd = (main.get("useAprDay") or "").strip()
     result.elapsed_years = elapsed_years(result.approval_ymd, as_of)
 
@@ -300,3 +311,81 @@ def fetch_exclusive_total(pnu: str) -> float:
         if "전유" in (row.get("exposPubuseGbCdNm") or "")
         and "부속" not in (row.get("mainAtchGbCdNm") or "")
     )
+
+
+#아파트 단지 정보 — 재건축 판정·계산에 쓴다. 아파트 필지에만 부른다 (구역 전 필지에 부르면 /zone 이 느려진다)
+@dataclass
+class ApartmentComplex:
+    pnu: str
+    households: int = 0          # 총괄표제부 세대수 (공식). 표제부 합계는 부속동 등으로 어긋난다 (미미삼 4,033 vs 3,930)
+    far_area_m2: float = 0.0     # 용적률 산정 연면적 → 현황용적률 = 이 값 ÷ (단지 + 부속지번 대지면적)
+    annex_pnus: list[str] = field(default_factory=list)  # 부속지번 PNU (건물 없이 단지에 묶인 필지, 미미삼 17번지)
+    recap_found: bool = False    # 총괄표제부가 있었나 (한 동짜리 단지는 없을 수 있다 → 표제부로 대신한다)
+    #상가 등 비주거 건물 — 재건축 조합원이지만 공동주택가격이 없다 → 토지 지분 + 건물 원가법으로 따로 잡는다.
+    #  표제부에서 주용도가 공동주택이 아닌 동(근린생활시설·노유자시설 등)이다. 공동주택 부대시설(노인정·관리사무소·기계실)은
+    #  주용도가 공동주택이라 빠진다 — 공용이라 따로 소유자가 없다
+    #  호수 = hoCnt, 없으면 hhldCnt(상가동이 세대수 칸에 호수를 적기도 한다 : 미미삼 가동 55·나동 48), 둘 다 0 이면 1 (일반건축물 한 채)
+    commercial_units: int = 0
+    commercial_floor_area_m2: float = 0.0
+    commercial_structure: str = ""
+    commercial_approval_ymd: str = ""
+    total_floor_area_m2: float = 0.0     # 단지 표제부 연면적 합계 — 상가 토지 지분(연면적 비율)의 분모
+    fallback: bool = False
+
+
+def fetch_apartment_complex(pnu: str) -> ApartmentComplex:
+    result = ApartmentComplex(pnu=pnu)
+    parts = parse_pnu(pnu)
+    key = _service_key()
+    if parts is None or not key:
+        result.fallback = True
+        return result
+
+    sigungu, bjdong, plat_gb, bun, ji = parts
+    base = {
+        "serviceKey": key, "sigunguCd": sigungu, "bjdongCd": bjdong,
+        "platGbCd": plat_gb, "bun": bun, "ji": ji, "_type": "json",
+    }
+
+    try:
+        recaps, _ = _rows(RECAP_URL, base, 1)
+        #총괄표제부는 용도별로 여러 행일 수 있다 (미미삼 : 공동주택 3,930세대 + 교육연구및복지시설 0세대).
+        #  세대수는 더하고, 용적률 산정 연면적은 대지 전체 값이 행마다 같게 들어 있어 큰 값을 쓴다
+        time.sleep(CALL_GAP)
+        titles, _ = _rows(TITLE_URL, base, MAX_TITLE_PAGES)
+        if recaps:
+            result.recap_found = True
+            result.households = sum(_i(row.get("hhldCnt")) for row in recaps)
+            result.far_area_m2 = max(_f(row.get("vlRatEstmTotArea")) for row in recaps)
+        else:
+            result.households = sum(_i(row.get("hhldCnt")) for row in titles if "공동주택" in (row.get("mainPurpsCdNm") or ""))
+            result.far_area_m2 = sum(_f(row.get("vlRatEstmTotArea")) for row in titles)
+
+        result.total_floor_area_m2 = sum(_f(row.get("totArea")) for row in titles)
+        shops = [row for row in titles if "공동주택" not in (row.get("mainPurpsCdNm") or "") and _f(row.get("totArea")) > 0]
+        if shops:
+            result.commercial_units = sum(_i(row.get("hoCnt")) or _i(row.get("hhldCnt")) or 1 for row in shops)
+            result.commercial_floor_area_m2 = sum(_f(row.get("totArea")) for row in shops)
+            main_shop = max(shops, key=lambda row: _f(row.get("totArea")))
+            result.commercial_structure = (main_shop.get("strctCdNm") or "").strip()
+            result.commercial_approval_ymd = (main_shop.get("useAprDay") or "").strip()
+
+        time.sleep(CALL_GAP)
+        atch, _ = _rows(ATCH_URL, base, MAX_ATCH_PAGES)
+        annex = []
+        for row in atch:
+            a_bun, a_ji = (row.get("atchBun") or "").strip(), (row.get("atchJi") or "").strip()
+            if not a_bun.isdigit():
+                continue
+            a_sigungu = (row.get("atchSigunguCd") or sigungu).strip() or sigungu
+            a_bjdong = (row.get("atchBjdongCd") or bjdong).strip() or bjdong
+            a_plat = "2" if (row.get("atchPlatGbCd") or "0").strip() == "1" else "1"
+            annex_pnu = f"{a_sigungu}{a_bjdong}{a_plat}{int(a_bun):04d}{int(a_ji or 0):04d}"
+            if annex_pnu != pnu and annex_pnu not in annex:
+                annex.append(annex_pnu)
+        result.annex_pnus = annex
+    except Exception as err:
+        logger.warning(f"[ Log ] : 건축물대장 총괄표제부·부속지번 조회 실패 {pnu} : {err}")
+        result.fallback = True
+    return result
+
