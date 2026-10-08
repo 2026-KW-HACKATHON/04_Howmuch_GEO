@@ -140,7 +140,7 @@ export default function SignupPage() {
                             </div>
                         </div>
                         <div className="mb-5 w-full overflow-x-auto">
-                            <div className="flex justify-center">
+                            <div className="mt-5 flex justify-center">
                                 <ReCAPTCHA
                                     sitekey={import.meta.env.VITE_GOOGLE_RECAPTCHA_API}
                                     onChange={handleCaptchaChange}

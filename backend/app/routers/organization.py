@@ -14,7 +14,7 @@ from app.schemas.organization_scenario import OrganizationScenarioCreate
 #조직 라우터
 router = APIRouter(
     prefix="/api/v1/organization",
-    tags=["Organization"]
+    tags=["Organization Router"]
 )
 
 #로그인 된 사용자인지 확인하는 함수
@@ -108,7 +108,7 @@ def get_organization_scenario(
     ).scalar_one_or_none()
     if not scenario:
         raise BadRequestException("조합 기준안을 찾을 수 없습니다.")
-        
+
     return {
         "scenario": scenario.scenario_data,
         "updated_at": scenario.updated_at.isoformat(),

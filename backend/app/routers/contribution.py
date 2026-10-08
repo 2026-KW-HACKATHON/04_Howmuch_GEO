@@ -92,7 +92,7 @@ import time
 #부동산 계산식 API 라우터 설정
 router = APIRouter(
     prefix="/api/v1",
-    tags=["Contribution Engine"]
+    tags=["Contribution Router"]
 )
 
 #백엔드 Logger

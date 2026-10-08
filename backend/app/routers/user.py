@@ -16,7 +16,7 @@ from app.services.organization_service import get_active_organization, get_accou
 #User 라우터
 router = APIRouter(
     prefix="/api/v1",
-    tags=["User"]
+    tags=["User Router"]
 )
 
 #회원가입 API 엔드포인트

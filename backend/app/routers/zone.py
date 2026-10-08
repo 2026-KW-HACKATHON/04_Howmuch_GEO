@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 #부동산 계산식 API 라우터 설정
 router = APIRouter(
     prefix="/api/v1",
-    tags=["RealEstate Engine"]
+    tags=["Zone Router"]
 )
 
 #환경 변수 로드

@@ -79,13 +79,15 @@ export default function PaymentPage() {
 
     return (
         <main className="min-h-screen bg-[#f5f7f4] text-slate-900">
-            <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-5 sm:px-10">
-                <Link to="/main" className="text-lg font-bold tracking-tight text-slate-900">
-                    얼마 <span className="font-medium text-emerald-700">GEO</span>
+            <header className="flex h-16 items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 sm:px-5">
+                <Link to="/main" className="flex w-fit shrink-0">
+                    <img
+                        src="/banner.png"
+                        alt="얼마 GEO 배너"
+                        className="h-15 w-30 object-contain"
+                    />
                 </Link>
-                <Link to="/main" className="text-sm font-medium text-slate-600 hover:text-slate-950">
-                    서비스로 돌아가기
-                </Link>
+                <Link to="/main" className="shrink-0 whitespace-nowrap text-sm font-medium text-slate-600 hover:text-slate-950">돌아가기</Link>
             </header>
 
             <div className="mx-auto grid w-full max-w-5xl gap-10 px-5 py-10 sm:px-10 lg:grid-cols-[1fr_360px] lg:gap-16 lg:py-16">
