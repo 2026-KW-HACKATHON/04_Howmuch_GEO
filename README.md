@@ -45,6 +45,7 @@ https://04-howmuch-geo-ntnl.vercel.app/
 |:---------------------------|:----------------------------------------------------------------|:---------------------------------------------------------|
 | Cadastral Router           | GET /api/v1/cadastral                                           | 필지 조회 API                                              |
 | Zone Router                | POST /api/v1/zone                                               | 슬라이더 및 기본 정보 조합 API                                 |
+| Zone Router                | POST /api/v1/zone/type                                          | 크레딧 소모하지 않고 사업 유형 미리 판정 API                      |
 | Contribution Router        | POST /api/v1/contribution                                       | 최종 분담금 계산 API                                         |
 | User Router                | POST /api/v1/user/signup                                        | 사용자 회원가입 API                                          |
 | User Router                | POST /api/v1/user/login                                         | 사용자 로그인 API                                           |
