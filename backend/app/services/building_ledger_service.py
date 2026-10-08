@@ -251,8 +251,12 @@ def fetch_building(pnu: str, as_of: date | None = None) -> BuildingLedger:
     result.has_building = True
     result.floor_area_m2 = sum(_f(row.get("totArea")) for row in titles)
 
-    #대표 구조·사용승인일은 연면적이 가장 큰 동에서 가져온다 (여러 동이면 그 동이 지배적이다)
-    main = max(titles, key=lambda row: _f(row.get("totArea")))
+    #대표 용도·구조·층수·사용승인일은 연면적이 가장 큰 동에서 가져온다 (여러 동이면 그 동이 지배적이다).
+    #  단 세대가 있는 동이 있으면 그중에서 고른다 — 신축 대단지는 지하주차장이 한 동으로 등록돼
+    #  연면적이 가장 크다 (그랑빌 3,003세대 : 기타용도 '지하주차장…' · 지상 0층). 그 동을 대표로 쓰면
+    #  아파트 판정(공동주택 + 기타용도 '아파트' 또는 5층 이상)에 실패해 재개발로 잘못 판정된다
+    housing_rows = [row for row in titles if _i(row.get("hhldCnt")) > 0 or _i(row.get("fmlyCnt")) > 0]
+    main = max(housing_rows or titles, key=lambda row: _f(row.get("totArea")))
     result.structure = (main.get("strctCdNm") or "").strip()
     result.main_purpose = (main.get("mainPurpsCdNm") or "").strip()
     result.etc_purpose = (main.get("etcPurps") or "").strip()
