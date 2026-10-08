@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SlidersState } from '../hooks/useSlider';
+import { ParcelInfo } from '../utils/parcel';
+import { OrganizationMapView, OrganizationScenario } from '../api/organization_api';
 import {
     ContributionResult, MemberCountRange, MAX_UNIT_TYPES, UnitMixEntry,
     ZoneInfo, ZonePriorAsset,
@@ -25,13 +27,23 @@ const DEFAULT_ZONING_OPTIONS = [
 
 //예측 폼 Hook Props
 export interface ModelPredictFormProps {
-    onHandleZoneData: (pnus: string[], zoning?: string) => Promise<any>;
+    onHandleZoneData: (pnus: string[], zoning?: string, parcels?: ParcelInfo[], targetYm?: string, householdCount?: number) => Promise<any>;
     onCalculateContribution: (requestData: any) => Promise<any>;
     selectedPnus: string[];
+    selectedParcels: ParcelInfo[];
+    onRestoreSelection: (pnus: string[], parcels: ParcelInfo[], mapView: OrganizationMapView) => void;
+    mapView: OrganizationMapView | null;
 }
 
 //예측 폼 Hook 
-export function useModelPredictForm({ onHandleZoneData, onCalculateContribution, selectedPnus }: ModelPredictFormProps) {
+export function useModelPredictForm({
+    onHandleZoneData,
+    onCalculateContribution,
+    selectedPnus,
+    selectedParcels,
+    onRestoreSelection,
+    mapView,
+}: ModelPredictFormProps) {
     //API 호출 함수는 부모가 매 렌더 새로 만들 수 있다
     //  의존성에 그대로 넣으면 디바운스 타이머가 매번 취소돼 호출이 영원히 안 나간다
     const zoneApiRef = useRef(onHandleZoneData);
@@ -246,6 +258,108 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         }
     }, [selectedPnus, selectedZoning]);
 
+    const createSharedScenario = useCallback((): OrganizationScenario | null => {
+        if (
+            !zoneCalculated
+            || !selectedZoning
+            || selectedPnus.length === 0
+            || selectedParcels.length !== selectedPnus.length
+            || !mapView
+        ) {
+            return null;
+        }
+
+        const unitMix = appliedUnitMix?.filter(
+            (row) => row.exclusive_area_m2 > 0 && row.household_ratio > 0
+        );
+
+        return {
+            pnus: selectedPnus,
+            parcels: selectedParcels,
+            map_view: mapView,
+            zoning: selectedZoning,
+            target_ym: targetYm,
+            sliders: Object.fromEntries(
+                Object.entries(sliderData).map(([key, config]) => [key, config.value])
+            ),
+            unit_mix: unitMix?.length ? unitMix : null,
+            rental_exclusive_area_m2: appliedRentalExclusive,
+        };
+    }, [
+        zoneCalculated,
+        selectedZoning,
+        selectedPnus,
+        selectedParcels,
+        mapView,
+        targetYm,
+        sliderData,
+        appliedUnitMix,
+        appliedRentalExclusive,
+    ]);
+
+    const loadSharedScenario = useCallback(async (scenario: OrganizationScenario) => {
+        onRestoreSelection(scenario.pnus, scenario.parcels, scenario.map_view);
+        setLoading(true);
+        setInitialCalculationPending(true);
+        setError(null);
+        setZoneCalculated(false);
+        setCalcResult(null);
+        setZoneInfo(null);
+        setCreditToken(null);
+
+        try {
+            const data = await zoneApiRef.current(
+                scenario.pnus,
+                scenario.zoning,
+                scenario.parcels,
+                scenario.target_ym,
+                Number(scenario.sliders.member_count ?? MEMBER_COUNT_FALLBACK.value),
+            );
+            if (!data?.zone) {
+                throw new Error('공유 기준안의 구역 정보를 불러오지 못했습니다.');
+            }
+
+            const nextSliders: SlidersState = {
+                ...(data.sliders ?? {}),
+                member_count: data.sliders?.member_count ?? MEMBER_COUNT_FALLBACK,
+            };
+            Object.entries(scenario.sliders).forEach(([key, value]) => {
+                if (nextSliders[key]) {
+                    nextSliders[key] = { ...nextSliders[key], value };
+                }
+            });
+            if (!data.sliders?.member_count && scenario.sliders.member_count !== undefined) {
+                nextSliders.member_count = {
+                    ...MEMBER_COUNT_FALLBACK,
+                    value: Number(scenario.sliders.member_count),
+                };
+            }
+
+            setSelectedZoning(scenario.zoning);
+            setZoneInfo(data.zone);
+            setCreditToken(data.credit_token);
+            setZoningOptions(data.zoning_options ?? DEFAULT_ZONING_OPTIONS);
+            setTargetYm(data.target_ym ?? scenario.target_ym);
+            setSliderData(nextSliders);
+            setPriorAsset(data.prior_asset ?? null);
+            setFarBase(typeof data.far_base === 'number' ? data.far_base : data.zone.far_min);
+            setUnitMix(scenario.unit_mix);
+            setAppliedUnitMix(scenario.unit_mix);
+            setRentalExclusive(scenario.rental_exclusive_area_m2);
+            setAppliedRentalExclusive(scenario.rental_exclusive_area_m2);
+            setOwnerPnu((current) => scenario.pnus.includes(current) ? current : '');
+            setOwnerExclusive(null);
+            setZoningStale(false);
+            setZoneCalculated(true);
+        } catch (loadError) {
+            setError(loadError instanceof Error ? loadError.message : '조합 기준안을 불러오는 중 오류가 발생했습니다.');
+            setInitialCalculationPending(false);
+            throw loadError;
+        } finally {
+            setLoading(false);
+        }
+    }, [onRestoreSelection]);
+
     //필지 선택이 바뀌면 이전 결과를 무효로 돌린다.
     //  자동으로 다시 계산하지는 않는다 — 구역 선택 → 용도지역 선택 → 계산 버튼 순서이고,
     //  필지를 여러 개 고르는 동안 매번 서버를 부르면 느리고 중간 결과가 혼란을 준다
@@ -430,5 +544,7 @@ export function useModelPredictForm({ onHandleZoneData, onCalculateContribution,
         handleZoneData,
         handleSubmit,
         zoneCalculated,
+        createSharedScenario,
+        loadSharedScenario,
     };
 }

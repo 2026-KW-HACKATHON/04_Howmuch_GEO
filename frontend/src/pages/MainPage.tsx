@@ -8,12 +8,16 @@ import StartupModal from '../components/StartupModal'
 import { useMainPage } from '../hooks/useMainPage';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import type { OrganizationMapView } from '../api/organization_api';
+import type { ParcelInfo } from '../utils/parcel';
 
 //메인 페이지
 export default function MainPage() {
     const [isProfileOpen, setIsProfileOpen] = useState(false);
     const [activePanel, setActivePanel] = useState<'news' | 'prediction'>('prediction');
     const [regionName, setRegionName] = useState('');
+    const [mapView, setMapView] = useState<OrganizationMapView | null>(null);
+    const [requestedMapView, setRequestedMapView] = useState<OrganizationMapView | null>(null);
     const profileRef = useRef<HTMLDivElement>(null);
     
     //MainPage Hook 사용
@@ -24,6 +28,7 @@ export default function MainPage() {
         selectedPnus,
         selectedParcels,
         handleSelectionChange,
+        restoreScenarioSelection,
         toggleSidebar,
         handleCaptchaChange,
         handleCadastralData,
@@ -34,7 +39,13 @@ export default function MainPage() {
         userEmail,
         dailyCredits,
         creditsUnavailable,
+        organizationOverview,
     } = useMainPage();
+
+    const handleRestoreScenario = (pnus: string[], parcels: ParcelInfo[], savedMapView: OrganizationMapView) => {
+        restoreScenarioSelection(pnus, parcels);
+        setRequestedMapView(savedMapView);
+    };
 
     const [startupModalOpen, setStartupModalOpen] = useState<boolean>(true);
 
@@ -82,6 +93,10 @@ export default function MainPage() {
                     onLoadCadastralData={handleCadastralData}
                     onSelectionChange={handleSelectionChange}
                     onRegionNameChange={setRegionName}
+                    selectedPnus={selectedPnus}
+                    selectedParcels={selectedParcels}
+                    requestedMapView={requestedMapView}
+                    onMapViewChange={setMapView}
                 />
             </main>
 
@@ -149,7 +164,19 @@ export default function MainPage() {
                         {activePanel === 'news' ? (
                             <NewsPanel onNewsPanelOpen={activePanel === 'news'} query={regionName}/>
                         ) : (
-                            <ModelPredictForm onHandleZoneData={handleZoneData} onCalculateContribution={handleContributionData} isOpen={isOpen} selectedPnus={selectedPnus} dailyCredits={dailyCredits} creditsUnavailable={creditsUnavailable}/>
+                            <ModelPredictForm
+                                onHandleZoneData={handleZoneData}
+                                onCalculateContribution={handleContributionData}
+                                isOpen={isOpen}
+                                selectedPnus={selectedPnus}
+                                selectedParcels={selectedParcels}
+                                onRestoreSelection={handleRestoreScenario}
+                                mapView={mapView}
+                                organizationRole={organizationOverview?.role}
+                                canUseSharedScenario={Boolean(organizationOverview?.unlimited_credits)}
+                                dailyCredits={dailyCredits}
+                                creditsUnavailable={creditsUnavailable}
+                            />
                         )}
                     </>
                 }

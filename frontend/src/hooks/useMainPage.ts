@@ -3,6 +3,7 @@ import { getZoneInfo, getContributionInfo } from '../api/realestate_api';
 import { ParcelInfo } from '../utils/parcel';
 import { useCallback, useState, useEffect } from 'react';
 import { userLogout, userInfo, userCredits } from '../api/user_api';
+import { getOrganizationOverview, OrganizationOverview } from '../api/organization_api';
 import axios from 'axios';
 
 //MainPage Hook
@@ -20,6 +21,7 @@ export const useMainPage = () => {
     const [kakaoPayPopUpOn, setKakaoPayPopUpOn] = useState<boolean>(false);
     //선택 필지의 면적·공시지가 (지적도 응답에서 뽑은 값)
     const [selectedParcels, setSelectedParcels] = useState<ParcelInfo[]>([]);
+    const [organizationOverview, setOrganizationOverview] = useState<OrganizationOverview | null>(null);
 
     //로그인 상태 확인
     const checkLoginStatus = useCallback(async () => {
@@ -29,6 +31,12 @@ export const useMainPage = () => {
                 setIsAuthenticated(true);
                 setUserName(response.user_name);
                 setUserEmail(response.email);
+                try {
+                    setOrganizationOverview(await getOrganizationOverview());
+                } catch (organizationError) {
+                    setOrganizationOverview(null);
+                    console.error('[ 조합 정보 조회 오류 발생 ] : ', organizationError);
+                }
                 const credits = await userCredits();
                 setDailyCredits(credits.credits_remaining);
                 setCreditsResetAt(credits.resets_at);
@@ -44,6 +52,7 @@ export const useMainPage = () => {
                 setUserEmail('');
                 setDailyCredits(null);
                 setCreditsUnavailable(false);
+                setOrganizationOverview(null);
             } else {
                 setCreditsUnavailable(true);
                 console.error("[ 크레딧 조회 오류 발생 ] : ", err);
@@ -121,6 +130,11 @@ export const useMainPage = () => {
         );
     }, []);
 
+    const restoreScenarioSelection = useCallback((pnus: string[], parcels: ParcelInfo[]) => {
+        setSelectedPnus(pnus);
+        setSelectedParcels(parcels);
+    }, []);
+
     //사이드바 토글시 isOpen 값 전환
     const toggleSidebar = () => {
         setIsOpen(!isOpen);
@@ -145,9 +159,20 @@ export const useMainPage = () => {
     }, []);
 
     //Zone 데이터 API 호출 Handler
-    const handleZoneData = useCallback(async (pnus: string[]) => {
+    const handleZoneData = useCallback(async (
+        pnus: string[],
+        zoning?: string,
+        parcels?: ParcelInfo[],
+        targetYm?: string,
+        householdCount?: number,
+    ) => {
         try {
-            const response = await getZoneInfo(pnus, { parcels: selectedParcels });
+            const response = await getZoneInfo(pnus, {
+                parcels: parcels ?? selectedParcels,
+                zoning,
+                targetYm,
+                householdCount,
+            });
             if (Number.isInteger(response.credits_remaining)) {
                 setDailyCredits(response.credits_remaining);
                 setCreditsUnavailable(false);
@@ -194,6 +219,7 @@ export const useMainPage = () => {
         selectedPnus,
         selectedParcels,
         handleSelectionChange,
+        restoreScenarioSelection,
         toggleSidebar,
         handleCaptchaChange,
         handleCadastralData,
@@ -204,6 +230,7 @@ export const useMainPage = () => {
         userEmail,
         dailyCredits,
         creditsUnavailable,
+        organizationOverview,
         toggleResetCredit,
         kakaoPayPopUpOn,
     };

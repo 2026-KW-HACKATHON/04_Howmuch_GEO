@@ -10,10 +10,22 @@ interface KakaoMapProps {
     //★ 부모에게 선택된 PNU와 그 필지의 면적·공시지가를 알려주는 콜백
     onSelectionChange?: (pnus: string[], parcels: ParcelInfo[]) => void;
     onRegionNameChange?: (regionName: string) => void;
+    selectedPnus?: string[];
+    selectedParcels?: ParcelInfo[];
+    requestedMapView?: { latitude: number; longitude: number; level: number } | null;
+    onMapViewChange?: (mapView: { latitude: number; longitude: number; level: number }) => void;
 }
 
 //카카오맵 컴포넌트
-const KakaoMap: React.FC<KakaoMapProps> = ({ onLoadCadastralData, onSelectionChange, onRegionNameChange }) => {
+const KakaoMap: React.FC<KakaoMapProps> = ({
+    onLoadCadastralData,
+    onSelectionChange,
+    onRegionNameChange,
+    selectedPnus: externalSelectedPnus,
+    selectedParcels = [],
+    requestedMapView,
+    onMapViewChange,
+}) => {
     //지도 및 필지 관리 훅
     const { mapRef, map, selectedPnus, setSelectedPnus, regionName, featuresMapRef } = useKakaoMap(onLoadCadastralData);
     
@@ -23,6 +35,44 @@ const KakaoMap: React.FC<KakaoMapProps> = ({ onLoadCadastralData, onSelectionCha
     //콜백은 부모가 매 렌더 새로 만들 수 있다. 의존성에 넣으면 무한 루프가 되므로 ref 로 잡는다
     const onSelectionChangeRef = useRef(onSelectionChange);
     onSelectionChangeRef.current = onSelectionChange;
+    const selectedParcelsRef = useRef(selectedParcels);
+    selectedParcelsRef.current = selectedParcels;
+    const onMapViewChangeRef = useRef(onMapViewChange);
+    onMapViewChangeRef.current = onMapViewChange;
+
+    //외부에서 가져온 필지 pnu 값 동기화
+    useEffect(() => {
+        if (externalSelectedPnus) {
+            setSelectedPnus(externalSelectedPnus);
+        }
+    }, [externalSelectedPnus, setSelectedPnus]);
+
+    //외부에서 가져온 필지에 대한 지도 화면 동기화
+    useEffect(() => {
+        if (!map || !requestedMapView) return;
+        map.setLevel(requestedMapView.level);
+        map.setCenter(new (window as any).kakao.maps.LatLng(
+            requestedMapView.latitude,
+            requestedMapView.longitude,
+        ));
+    }, [map, requestedMapView]);
+
+    useEffect(() => {
+        if (!map) return;
+        const reportMapView = () => {
+            const center = map.getCenter();
+            onMapViewChangeRef.current?.({
+                latitude: center.getLat(),
+                longitude: center.getLng(),
+                level: map.getLevel(),
+            });
+        };
+        (window as any).kakao.maps.event.addListener(map, 'idle', reportMapView);
+        reportMapView();
+        return () => {
+            (window as any).kakao.maps.event.removeListener(map, 'idle', reportMapView);
+        };
+    }, [map]);
 
     useEffect(() => {
         onRegionNameChange?.(regionName);
@@ -35,7 +85,9 @@ const KakaoMap: React.FC<KakaoMapProps> = ({ onLoadCadastralData, onSelectionCha
 
         //지적도 응답에 면적(폴리곤)과 개별공시지가(jiga)가 있어서 그대로 넘긴다
         const parcels = selectedPnus
-            .map((pnu) => parcelFromFeature(featuresMapRef.current[pnu]))
+            .map((pnu) => parcelFromFeature(featuresMapRef.current[pnu])
+                ?? selectedParcelsRef.current.find((parcel) => parcel.pnu === pnu)
+                ?? null)
             .filter((parcel): parcel is ParcelInfo => parcel !== null);
 
         notify(selectedPnus, parcels);
