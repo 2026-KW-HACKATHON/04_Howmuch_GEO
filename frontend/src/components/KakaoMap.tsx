@@ -57,6 +57,7 @@ const KakaoMap: React.FC<KakaoMapProps> = ({
         ));
     }, [map, requestedMapView]);
 
+    //시나리오(기준안) 저장시에 사용할 데이터 전달
     useEffect(() => {
         if (!map) return;
         const reportMapView = () => {

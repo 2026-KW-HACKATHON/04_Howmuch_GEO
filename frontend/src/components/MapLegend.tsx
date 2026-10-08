@@ -25,7 +25,7 @@ const MapLegend: React.FC = () => {
                 onClick={() => setIsOpen(!isOpen)}
                 className="w-full font-bold text-gray-800 px-3 py-2.5 flex items-center justify-between gap-4 focus:outline-none hover:bg-gray-50/50 transition-colors"
             >
-                <span>🏠 주거지역 범례</span>
+                <span>주거지역 범례</span>
                 <span className={`transform transition-transform duration-300 text-gray-500 ${isOpen ? 'rotate-0' : 'rotate-180'}`}>
                     ▼
                 </span>

@@ -1,0 +1,70 @@
+<mxfile host="app.diagrams.net" modified="2026-10-08T08:30:00.000Z" agent="Copilot" version="24.7.17" type="device">
+  <diagram id="howmuch-geo-erd" name="Database ERD">
+    <mxGraphModel dx="1600" dy="1100" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1600" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="얼마GEO Database ERD&#xa;관계선 설명은 각 연결선의 1 : 0..N 표기를 참고하세요. PK / FK / UK = 기본키 / 외래키 / 고유값" style="text;html=1;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=20;fontStyle=1;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="50" y="25" width="1000" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="user" value="&lt;b&gt;user&lt;/b&gt;&lt;hr&gt;PK user_id: Integer&lt;br&gt;UK user_name: String(255)&lt;br&gt;UK email: String(255)&lt;br&gt;password: String(255)" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=12;fontSize=13;fillColor=#dbeafe;strokeColor=#3b82f6;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="660" y="360" width="280" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="payment" value="&lt;b&gt;payment_order&lt;/b&gt;&lt;hr&gt;PK order_id: Integer&lt;br&gt;UK partner_order_id: String(64)&lt;br&gt;FK user_id: Integer&lt;br&gt;FK organization_id: Integer&lt;br&gt;plan_code: String(20)&lt;br&gt;tid: String(128), nullable&lt;br&gt;status: String(20)&lt;br&gt;created_at: DateTime" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=12;fontSize=12;fillColor=#fef3c7;strokeColor=#f59e0b;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="60" y="130" width="320" height="250" as="geometry"/>
+        </mxCell>
+        <mxCell id="credit" value="&lt;b&gt;credit_purchase_order&lt;/b&gt;&lt;hr&gt;PK order_id: Integer&lt;br&gt;UK partner_order_id: String(64)&lt;br&gt;FK user_id: Integer&lt;br&gt;tid: String(128), nullable&lt;br&gt;credit_amount: Integer&lt;br&gt;price: Integer&lt;br&gt;status: String(20)&lt;br&gt;created_at: DateTime" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=12;fontSize=12;fillColor=#fef3c7;strokeColor=#f59e0b;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="1220" y="130" width="320" height="250" as="geometry"/>
+        </mxCell>
+        <mxCell id="organization" value="&lt;b&gt;organization&lt;/b&gt;&lt;hr&gt;PK organization_id: Integer&lt;br&gt;FK, UK leader_user_id: Integer&lt;br&gt;plan_code: String(20)&lt;br&gt;UK invitation_code: String(32)&lt;br&gt;status: String(20)&lt;br&gt;max_members: Integer&lt;br&gt;paid_until: DateTime, nullable&lt;br&gt;created_at: DateTime" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=12;fontSize=12;fillColor=#dcfce7;strokeColor=#22c55e;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="60" y="500" width="340" height="260" as="geometry"/>
+        </mxCell>
+        <mxCell id="profile" value="&lt;b&gt;account_profile&lt;/b&gt;&lt;hr&gt;PK, FK user_id: Integer&lt;br&gt;account_type: String(20)" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=12;fontSize=12;fillColor=#f3e8ff;strokeColor=#a855f7;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="1210" y="390" width="300" height="110" as="geometry"/>
+        </mxCell>
+        <mxCell id="membership" value="&lt;b&gt;organization_membership&lt;/b&gt;&lt;hr&gt;PK membership_id: Integer&lt;br&gt;FK organization_id: Integer&lt;br&gt;FK, UK user_id: Integer&lt;br&gt;status: String(20)&lt;br&gt;applied_at: DateTime&lt;br&gt;approved_at: DateTime, nullable" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=12;fontSize=12;fillColor=#f3e8ff;strokeColor=#a855f7;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="1190" y="610" width="350" height="190" as="geometry"/>
+        </mxCell>
+        <mxCell id="scenarios" value="&lt;b&gt;organization_scenarios&lt;/b&gt; (현재, 여러 기준안)&lt;hr&gt;PK scenario_id: Integer&lt;br&gt;FK organization_id: Integer&lt;br&gt;scenario_name: String(60)&lt;br&gt;scenario_data: JSON&lt;br&gt;FK updated_by_user_id: Integer&lt;br&gt;updated_at: DateTime" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=12;fontSize=12;fillColor=#dcfce7;strokeColor=#22c55e;fontColor=#0f172a;" vertex="1" parent="1">
+          <mxGeometry x="640" y="690" width="350" height="190" as="geometry"/>
+        </mxCell>
+        <mxCell id="legacy" value="&lt;b&gt;organization_scenario&lt;/b&gt; (이전 자료 이관용)&lt;hr&gt;PK, FK organization_id: Integer&lt;br&gt;scenario_data: JSON&lt;br&gt;FK updated_by_user_id: Integer&lt;br&gt;updated_at: DateTime" style="rounded=1;whiteSpace=wrap;html=1;align=left;verticalAlign=top;spacing=12;fontSize=12;fillColor=#f1f5f9;strokeColor=#64748b;fontColor=#0f172a;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="450" y="930" width="350" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_user_payment" value="1 User : 0..N orders" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748b;fontColor=#334155;fontSize=11;labelBackgroundColor=#ffffff;endArrow=none;startArrow=none;exitX=0;exitY=0.1;exitDx=0;exitDy=0;entryX=1;entryY=0.7;entryDx=0;entryDy=0;" edge="1" parent="1" source="user" target="payment">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_payment_org" value="1 Organization : 0..N orders" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748b;fontColor=#334155;fontSize=11;labelBackgroundColor=#ffffff;endArrow=none;startArrow=none;exitX=1;exitY=0.45;exitDx=0;exitDy=0;entryX=1;entryY=0.9;entryDx=0;entryDy=0;" edge="1" parent="1" source="organization" target="payment">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_user_credit" value="1 User : 0..N credit orders" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748b;fontColor=#334155;fontSize=11;labelBackgroundColor=#ffffff;endArrow=none;startArrow=none;exitX=1;exitY=0.1;exitDx=0;exitDy=0;entryX=0;entryY=0.7;entryDx=0;entryDy=0;" edge="1" parent="1" source="user" target="credit">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_user_org_leader" value="User 0..1 : 1 Organization (leader)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748b;fontColor=#334155;fontSize=11;labelBackgroundColor=#ffffff;endArrow=none;startArrow=none;exitX=0;exitY=0.8;exitDx=0;exitDy=0;entryX=1;entryY=0.35;entryDx=0;entryDy=0;" edge="1" parent="1" source="user" target="organization">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_user_profile" value="1 User : 0..1 profile" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748b;fontColor=#334155;fontSize=11;labelBackgroundColor=#ffffff;endArrow=none;startArrow=none;exitX=1;exitY=0.35;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="user" target="profile">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_user_membership" value="1 User : 0..1 membership" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748b;fontColor=#334155;fontSize=11;labelBackgroundColor=#ffffff;endArrow=none;startArrow=none;exitX=1;exitY=0.85;exitDx=0;exitDy=0;entryX=0;entryY=0.45;entryDx=0;entryDy=0;" edge="1" parent="1" source="user" target="membership">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_org_membership" value="1 Organization : 0..N memberships" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748b;fontColor=#334155;fontSize=11;labelBackgroundColor=#ffffff;endArrow=none;startArrow=none;exitX=1;exitY=0.8;exitDx=0;exitDy=0;entryX=0;entryY=0.8;entryDx=0;entryDy=0;" edge="1" parent="1" source="organization" target="membership">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_org_scenarios" value="1 Organization : 0..N scenarios" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748b;fontColor=#334155;fontSize=11;labelBackgroundColor=#ffffff;endArrow=none;startArrow=none;exitX=1;exitY=0.95;exitDx=0;exitDy=0;entryX=0;entryY=0.4;entryDx=0;entryDy=0;" edge="1" parent="1" source="organization" target="scenarios">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_user_scenarios" value="1 User : 0..N saved scenarios" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#64748b;fontColor=#334155;fontSize=11;labelBackgroundColor=#ffffff;endArrow=none;startArrow=none;exitX=0.45;exitY=1;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="user" target="scenarios">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_org_legacy" value="1 Organization : 0..1 legacy scenario" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#94a3b8;fontColor=#475569;fontSize=11;labelBackgroundColor=#ffffff;endArrow=none;startArrow=none;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.2;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="organization" target="legacy">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e_user_legacy" value="1 User : 0..N legacy records" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#94a3b8;fontColor=#475569;fontSize=11;labelBackgroundColor=#ffffff;endArrow=none;startArrow=none;dashed=1;exitX=0;exitY=1;exitDx=0;exitDy=0;entryX=0.85;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="user" target="legacy">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
