@@ -250,6 +250,7 @@ export interface ContributionResult {
         rental_count: number;
         commercial_area_m2: number;
         gross_floor_area_m2: number;
+        sale_supply_m2?: number;        //평형에 나눠 줄 수 있는 분양 공급면적 (주택 공급면적 − 임대 − 기부 공공임대)
         total_cost: number;
         total_post_asset: number;
         total_prior_asset: number;
@@ -310,7 +311,6 @@ export function buildMetrics(
     //조합원 분양가(만원/평) : 고시일 확정값. timeline 이 없는 응답(이전 백엔드)이면 평형 분양가에서 되돌린다.
     //  계산 전에는 비워 둔다 — 슬라이더의 오늘 기준 분양가로 채우면 계산 후 값(고시일 기준)과 시점이 달라 헷갈린다
     const firstUnit = result?.unit_contributions?.[0];
-    const memberPriceRatio = result?.timeline?.member_price_ratio ?? null;
     const memberPricePerPyeong = result?.timeline?.member_price_per_pyeong
         ?? (firstUnit && firstUnit.supply_area_m2 ? firstUnit.member_price / (firstUnit.supply_area_m2 / PYEONG) : null);
 
@@ -366,13 +366,9 @@ export function buildMetrics(
         //  확정 이후에는 오르지 않는다 (공사비 증액은 비례율을 깎아 분담금으로 돌아온다)
         {
             label: '조합원 분양가',
-            //비율을 같이 적는다. 자동이면 관리처분 비례율 100% 가 되도록 서버가 정한 값이다
-            value: memberPricePerPyeong
-                ? `${Math.round(memberPricePerPyeong).toLocaleString()}만원/평`
-                  + (memberPriceRatio ? ` · 일반분양가의 ${Math.round(memberPriceRatio * 100)}%` : '')
-                : '–',
+            //가격만 적는다 (일반분양가 대비 비율은 세부 설정의 조합원 분양가 비율 슬라이더에서 본다)
+            value: memberPricePerPyeong ? `${Math.round(memberPricePerPyeong).toLocaleString()}만원/평` : '–',
             sliderKey: 'member_price_ratio',
-            compact: true,
         },
     ];
 }

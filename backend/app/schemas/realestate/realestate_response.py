@@ -110,6 +110,7 @@ class ContributionProject(BaseModel):
     total_prior_asset: float = Field(..., description="총 종전자산")
     proportional_rate: float = Field(..., description="비례율 (%)")
     warnings: List[str] = Field(default_factory=list, description="사업성 계산 경고 메시지")
+    sale_supply_m2: float = Field(0.0, description="평형에 나눠 줄 수 있는 분양 공급면적 (㎡) = 주택 공급면적 − 임대 − 기부채납 공공임대")
 
 
 #조합원 평형 선택 옵션 스키마
