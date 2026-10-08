@@ -6,7 +6,6 @@ import logging
 import secrets
 from zoneinfo import ZoneInfo
 
-
 #일일 사용 가능한 크레딧 수 제한
 DAILY_CREDIT_LIMIT = 5
 
@@ -44,16 +43,34 @@ _ISSUE_CREDIT_TOKEN_SCRIPT = """
 return redis.call('SET', KEYS[1], 'pending', 'EX', ARGV[1], 'NX')
 """
 
+_FULFILL_PURCHASE_SCRIPT = """
+if redis.call('SET', KEYS[2], 'fulfilled', 'NX') then
+    return redis.call('INCRBY', KEYS[1], ARGV[1])
+end
+return tonumber(redis.call('GET', KEYS[1]) or '0')
+"""
+
 #계산 성공 후 토큰당 한 번만 크레딧을 차감. 같은 구역의 자동 재계산은 기존 차감을 재사용
 _CONSUME_CREDIT_TOKEN_SCRIPT = """
 local token_state = redis.call('GET', KEYS[2])
 local credits = redis.call('GET', KEYS[1])
+local purchased = tonumber(redis.call('GET', KEYS[3]) or '0')
+if token_state == 'unlimited-consumed' then
+    if ARGV[3] == '1' then
+        return -3
+    end
+    return -2
+end
+if ARGV[3] == '1' and token_state == 'pending' then
+    redis.call('SET', KEYS[2], 'unlimited-consumed', 'EX', ARGV[2])
+    return -3
+end
 if token_state == 'consumed' then
     if not credits then
         redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
         credits = ARGV[1]
     end
-    return tonumber(credits)
+    return tonumber(credits) + purchased
 end
 if token_state ~= 'pending' then
     return -2
@@ -62,12 +79,15 @@ if not credits then
     redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
     credits = ARGV[1]
 end
-if tonumber(credits) <= 0 then
+if tonumber(credits) > 0 then
+    credits = redis.call('DECR', KEYS[1])
+elseif purchased > 0 then
+    purchased = redis.call('DECR', KEYS[3])
+else
     return -1
 end
-credits = redis.call('DECR', KEYS[1])
 redis.call('SET', KEYS[2], 'consumed', 'EX', ARGV[2])
-return credits
+return tonumber(credits) + tonumber(purchased)
 """
 
 #일일 크레딧 키와 TTL(만료 시간)을 계산하는 함수
@@ -113,18 +133,20 @@ async def issue_credit_token(user_id: int) -> str:
         )
     return token
 
-#계산 성공 후 토큰을 소비. 동일 토큰의 재계산은 추가 차감하지 않는다
-async def consume_credit_token(user_id: int, token: str) -> int:
+#계산 성공 후 토큰을 소비. 동일 토큰의 재계산은 추가 차감하지 않음
+async def consume_credit_token(user_id: int, token: str, unlimited: bool = False) -> int:
     daily_key, ttl_seconds, _ = _daily_key_and_ttl(user_id)
 
     try:
         remaining = await redis_client.eval(
             _CONSUME_CREDIT_TOKEN_SCRIPT,
-            2,
+            3,
             daily_key,
             f"{daily_key}:token:{token}",
+            f"purchased-credits:{user_id}",
             DAILY_CREDIT_LIMIT,
             ttl_seconds,
+            1 if unlimited else 0,
         )
     except RedisError as err:
         logger.exception("Unable to consume credit token for user %s", user_id)
@@ -133,6 +155,8 @@ async def consume_credit_token(user_id: int, token: str) -> int:
         ) from err
 
     remaining = int(remaining)
+    if remaining == -3:
+        return -1
     if remaining == -1:
         raise ServiceUnavailableException(
             message="오늘 사용할 수 있는 크레딧을 모두 사용했습니다."
@@ -149,13 +173,14 @@ async def get_daily_credits(user_id: int) -> dict[str, int | str]:
 
     #Redis에서 키를 가져오고, 없으면 초기화하며, 만료 시간을 설정
     try:
-        remaining = await redis_client.eval(
+        daily_remaining = await redis_client.eval(
             _GET_OR_INITIALIZE_SCRIPT,
             1,
             key,
             DAILY_CREDIT_LIMIT,
             ttl_seconds,
         )
+        purchased_remaining = await redis_client.get(f"purchased-credits:{user_id}")
 
     #Redis에서 키를 가져오지 못했거나 오류가 발생하면 HTTP 503 에러를 발생시키고, 로깅
     except RedisError as err:
@@ -166,10 +191,28 @@ async def get_daily_credits(user_id: int) -> dict[str, int | str]:
 
     #Redis에서 가져온 남은 크레딧 수와 일일 크레딧 제한, 초기화 시간을 반환
     return {
-        "credits_remaining": int(remaining),
+        "credits_remaining": int(daily_remaining) + int(purchased_remaining or 0),
+        "daily_credits_remaining": int(daily_remaining),
+        "purchased_credits": int(purchased_remaining or 0),
         "daily_credit_limit": DAILY_CREDIT_LIMIT,
         "resets_at": resets_at.isoformat(),
     }
+
+
+async def fulfill_credit_purchase(user_id: int, partner_order_id: str, credits: int) -> int:
+    try:
+        return int(await redis_client.eval(
+            _FULFILL_PURCHASE_SCRIPT,
+            2,
+            f"purchased-credits:{user_id}",
+            f"credit-purchase-fulfilled:{partner_order_id}",
+            credits,
+        ))
+    except RedisError as err:
+        logger.exception("Unable to fulfill credit purchase %s", partner_order_id)
+        raise ServiceUnavailableException(
+            message="결제는 승인됐지만 크레딧 반영을 확인할 수 없습니다. 고객센터에 문의해 주세요."
+        ) from err
 
 #일일 크레딧을 초기화하는 함수. Redis에서 해당 사용자의 크레딧을 초기화하고, 만료 시간을 설정
 async def reset_daily_credits(user_id: int) -> dict[str, int | str]:

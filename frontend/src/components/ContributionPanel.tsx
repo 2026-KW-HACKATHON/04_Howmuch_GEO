@@ -621,8 +621,11 @@ export default function ContributionPanel({
 
                 {/* 예측 기준 시점 */}
                 <p className="mt-1 border-t border-dashed border-gray-200 pt-2.5 text-[10.5px] leading-relaxed text-gray-400">
-                    공사비·일반분양가 기본값은 <b>{targetYm}</b> 기준 예측값,
+                    - 공사비·일반분양가 기본값은 <b>{targetYm}</b> 기준 예측값,
                     건설공사비지수는 시점 보정, 분양가는 인근 분양 사례 기준
+                </p>
+                <p className="mt-1 pt-2.5 text-[10.5px] leading-relaxed text-gray-400">
+                    - 예측값입니다. 확정 분담금은 감정평가·관리처분계획 인가 후 결정되며, 금액은 미래 시점 명목가입니다.
                 </p>
             </div>
         </div>

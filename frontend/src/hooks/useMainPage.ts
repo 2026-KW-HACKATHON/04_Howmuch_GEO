@@ -3,6 +3,7 @@ import { getZoneInfo, getContributionInfo } from '../api/realestate_api';
 import { ParcelInfo } from '../utils/parcel';
 import { useCallback, useState, useEffect } from 'react';
 import { userLogout, userInfo, userCredits } from '../api/user_api';
+import { getOrganizationOverview, OrganizationOverview } from '../api/organization_api';
 import axios from 'axios';
 
 //MainPage Hook
@@ -13,33 +14,45 @@ export const useMainPage = () => {
 
     const [userName, setUserName] = useState<string>('');
     const [userEmail, setUserEmail] = useState<string>('');
+    const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
     const [dailyCredits, setDailyCredits] = useState<number | null>(null);
     const [creditsUnavailable, setCreditsUnavailable] = useState<boolean>(false);
     const [creditsResetAt, setCreditsResetAt] = useState<string | null>(null);
-    const [resettingCredits, setResettingCredits] = useState<boolean>(false);
     const [kakaoPayPopUpOn, setKakaoPayPopUpOn] = useState<boolean>(false);
     //선택 필지의 면적·공시지가 (지적도 응답에서 뽑은 값)
     const [selectedParcels, setSelectedParcels] = useState<ParcelInfo[]>([]);
+    const [organizationOverview, setOrganizationOverview] = useState<OrganizationOverview | null>(null);
 
     //로그인 상태 확인
     const checkLoginStatus = useCallback(async () => {
         try {
             const response = await userInfo();
             if (response && response.user_name && response.email) {
+                setIsAuthenticated(true);
                 setUserName(response.user_name);
                 setUserEmail(response.email);
+                try {
+                    setOrganizationOverview(await getOrganizationOverview());
+                } catch (organizationError) {
+                    setOrganizationOverview(null);
+                    console.error('[ 조합 정보 조회 오류 발생 ] : ', organizationError);
+                }
                 const credits = await userCredits();
                 setDailyCredits(credits.credits_remaining);
                 setCreditsResetAt(credits.resets_at);
                 setCreditsUnavailable(false);
             } else {
-                alert("계정 정보에 오류가 생겼습니다. 다시 로그인해주세요.");
-                window.location.href = "/login";
+                setIsAuthenticated(false);
+                setDailyCredits(null);
             }
         } catch (err: any) {
             if (err.response && err.response.status === 401) {
-                alert("로그인이 필요합니다.");
-                window.location.href = "/login";
+                setIsAuthenticated(false);
+                setUserName('');
+                setUserEmail('');
+                setDailyCredits(null);
+                setCreditsUnavailable(false);
+                setOrganizationOverview(null);
             } else {
                 setCreditsUnavailable(true);
                 console.error("[ 크레딧 조회 오류 발생 ] : ", err);
@@ -51,6 +64,30 @@ export const useMainPage = () => {
     useEffect(() => {
         void checkLoginStatus();
     }, [checkLoginStatus]);
+
+    useEffect(() => {
+        if (!isAuthenticated) return;
+
+        const refreshCredits = async () => {
+            if (document.visibilityState !== 'visible') return;
+            try {
+                const credits = await userCredits();
+                setDailyCredits(credits.credits_remaining);
+                setCreditsResetAt(credits.resets_at);
+                setCreditsUnavailable(false);
+            } catch (err) {
+                setCreditsUnavailable(true);
+                console.error('[ 크레딧 새로고침 오류 발생 ] : ', err);
+            }
+        };
+
+        window.addEventListener('focus', refreshCredits);
+        document.addEventListener('visibilitychange', refreshCredits);
+        return () => {
+            window.removeEventListener('focus', refreshCredits);
+            document.removeEventListener('visibilitychange', refreshCredits);
+        };
+    }, [isAuthenticated]);
 
     //페이지를 열어둔 채 날짜가 바뀌어도 일일 크레딧 잔액을 갱신
     useEffect(() => {
@@ -77,13 +114,12 @@ export const useMainPage = () => {
         try {
             await userLogout();
             alert("정상적으로 로그아웃 되었습니다.");
-            window.location.href = "/login";
+            window.location.href = "/";
         } catch (err) {
             console.error("[ logoutButtonAction 오류 발생 ] : ", err);
             alert("로그아웃 중 오류가 발생했습니다. 다시 시도해주세요.");
         }
     }
-
 
     //선택 필지 갱신 Handler
     //  같은 필지 목록이면 상태를 그대로 둔다. 매번 새 배열을 넣으면 렌더가 무한히 반복된다
@@ -92,6 +128,11 @@ export const useMainPage = () => {
         setSelectedParcels((prev) =>
             prev.map((p) => p.pnu).join(',') === parcels.map((p) => p.pnu).join(',') ? prev : parcels
         );
+    }, []);
+
+    const restoreScenarioSelection = useCallback((pnus: string[], parcels: ParcelInfo[]) => {
+        setSelectedPnus(pnus);
+        setSelectedParcels(parcels);
     }, []);
 
     //사이드바 토글시 isOpen 값 전환
@@ -161,13 +202,14 @@ export const useMainPage = () => {
         }
     }
 
-
     return {
         isOpen,
+        isAuthenticated,
         isVerified,
         selectedPnus,
         selectedParcels,
         handleSelectionChange,
+        restoreScenarioSelection,
         toggleSidebar,
         handleCaptchaChange,
         handleCadastralData,
@@ -178,8 +220,8 @@ export const useMainPage = () => {
         userEmail,
         dailyCredits,
         creditsUnavailable,
-        resettingCredits,
+        organizationOverview,
         toggleResetCredit,
-        kakaoPayPopUpOn
+        kakaoPayPopUpOn,
     };
 }

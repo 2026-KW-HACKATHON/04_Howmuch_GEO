@@ -4,33 +4,31 @@ import KakaoMap from "../components/KakaoMap"
 import SideBar from '../components/SideBar';
 import ModelPredictForm from '../components/ModelPredictForm';
 import NewsPanel from '../components/NewsPanel';
-import ReCAPTCHA from 'react-google-recaptcha';
+import StartupModal from '../components/StartupModal'
 import { useMainPage } from '../hooks/useMainPage';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { PaymentRequest } from '../api/payment_api';
+import type { OrganizationMapView } from '../api/organization_api';
+import type { ParcelInfo } from '../utils/parcel';
 
 //메인 페이지
 export default function MainPage() {
     const [isProfileOpen, setIsProfileOpen] = useState(false);
-    const [activePanel, setActivePanel] = useState<'news' | 'prediction'>('news');
+    const [activePanel, setActivePanel] = useState<'news' | 'prediction'>('prediction');
     const [regionName, setRegionName] = useState('');
+    const [mapView, setMapView] = useState<OrganizationMapView | null>(null);
+    const [requestedMapView, setRequestedMapView] = useState<OrganizationMapView | null>(null);
     const profileRef = useRef<HTMLDivElement>(null);
     
-    const paymentParam: PaymentRequest = {
-        item_name: '개인 Daily 크레딧 충전',
-        quantity: 1,
-        price: 1,
-        tax_free_amount: 0,
-    };
-
     //MainPage Hook 사용
     const {
         isOpen,
+        isAuthenticated,
         isVerified,
         selectedPnus,
         selectedParcels,
         handleSelectionChange,
+        restoreScenarioSelection,
         toggleSidebar,
         handleCaptchaChange,
         handleCadastralData,
@@ -41,7 +39,28 @@ export default function MainPage() {
         userEmail,
         dailyCredits,
         creditsUnavailable,
+        organizationOverview,
     } = useMainPage();
+
+    const handleRestoreScenario = (pnus: string[], parcels: ParcelInfo[], savedMapView: OrganizationMapView) => {
+        restoreScenarioSelection(pnus, parcels);
+        setRequestedMapView(savedMapView);
+    };
+
+    const [startupModalOpen, setStartupModalOpen] = useState<boolean>(true);
+
+    const toggleModal = () => {
+        if (startupModalOpen) {
+            setStartupModalOpen(false);
+        } else {
+            setStartupModalOpen(true);
+        }
+    }
+
+    //페이지 처음 오픈시 기본동작
+    useEffect(() => {
+        setStartupModalOpen(true);
+    },[]);
 
     //프로필 메뉴 외부 클릭 시 닫기 및 ESC 키로 닫기
     useEffect(() => {
@@ -74,6 +93,10 @@ export default function MainPage() {
                     onLoadCadastralData={handleCadastralData}
                     onSelectionChange={handleSelectionChange}
                     onRegionNameChange={setRegionName}
+                    selectedPnus={selectedPnus}
+                    selectedParcels={selectedParcels}
+                    requestedMapView={requestedMapView}
+                    onMapViewChange={setMapView}
                 />
             </main>
 
@@ -92,29 +115,40 @@ export default function MainPage() {
 
                 {isProfileOpen && (
                     <div className="absolute right-0 mt-3 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-                        <div className="border-b border-slate-100 px-4 py-4">
+                        {isAuthenticated ? <div className="border-b border-slate-100 px-4 py-4">
                             <p className="font-semibold text-slate-900">내 프로필</p>
                             <p className="mt-1 text-sm text-slate-500">{userName}</p>
                             <p className="text-xs text-slate-400">{userEmail}</p>
                             <p className="mt-3 text-sm font-medium text-slate-700">
-                                오늘 크레딧 {dailyCredits ?? '-'} / 5
+                                {dailyCredits === -1 ? '조합 무제한 크레딧' : `사용 가능 크레딧 ${dailyCredits ?? '-'}`}
                             </p>
-                        </div>
-                        <Link
-                            to="/payment"
-                            state={{ paymentParam }}
+                        </div> : <div className="border-b border-slate-100 px-4 py-4">
+                            <p className="font-semibold text-slate-900">로그인이 필요합니다</p>
+                        </div>}
+                        {isAuthenticated ? <Link
+                            to="/organization"
+                            onClick={() => setIsProfileOpen(false)}
+                            className="block w-full border-b border-slate-100 px-4 py-3 text-left text-sm font-medium text-emerald-700 transition hover:bg-emerald-50"
+                        >
+                            조합·가입 관리
+                        </Link> : <>
+                            <Link to="/login" onClick={() => setIsProfileOpen(false)} className="block w-full border-b border-slate-100 px-4 py-3 text-left text-sm font-medium text-blue-700 transition hover:bg-blue-50">로그인</Link>
+                            <Link to="/signup" onClick={() => setIsProfileOpen(false)} className="block w-full px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50">회원가입</Link>
+                        </>}
+                        {isAuthenticated && dailyCredits !== -1 && <Link
+                            to="/credits/payment"
                             onClick={() => setIsProfileOpen(false)}
                             className="block w-full border-b border-slate-100 px-4 py-3 text-left text-sm font-medium text-blue-700 transition hover:bg-blue-50"
                         >
-                            크레딧 결제
-                        </Link>
-                        <button
+                            크레딧 구매 · 5회 ₩500
+                        </Link>}
+                        {isAuthenticated && <button
                             type="button"
                             onClick={logoutButtonAction}
                             className="w-full px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                         >
                         로그아웃
-                        </button>
+                        </button>}
                     </div>
                 )}
             </div>
@@ -130,11 +164,27 @@ export default function MainPage() {
                         {activePanel === 'news' ? (
                             <NewsPanel onNewsPanelOpen={activePanel === 'news'} query={regionName}/>
                         ) : (
-                            <ModelPredictForm onHandleZoneData={handleZoneData} onCalculateContribution={handleContributionData} isOpen={isOpen} selectedPnus={selectedPnus} dailyCredits={dailyCredits} creditsUnavailable={creditsUnavailable}/>
+                            <ModelPredictForm
+                                onHandleZoneData={handleZoneData}
+                                onCalculateContribution={handleContributionData}
+                                isOpen={isOpen}
+                                selectedPnus={selectedPnus}
+                                selectedParcels={selectedParcels}
+                                onRestoreSelection={handleRestoreScenario}
+                                mapView={mapView}
+                                organizationRole={organizationOverview?.role}
+                                canUseSharedScenario={Boolean(organizationOverview?.unlimited_credits)}
+                                dailyCredits={dailyCredits}
+                                creditsUnavailable={creditsUnavailable}
+                            />
                         )}
                     </>
                 }
-            />               
+            />           
+
+            {startupModalOpen && (
+                <StartupModal onToggleModal={toggleModal}/>
+            )}    
         </div>
     );
 };

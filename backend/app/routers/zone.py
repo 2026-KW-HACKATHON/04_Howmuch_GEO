@@ -31,7 +31,7 @@ from dataclasses import asdict
 from datetime import datetime
 from dotenv import load_dotenv
 from dataclasses import is_dataclass, asdict
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from requests.adapters import HTTPAdapter
 from typing import Any, List, Optional
 from urllib3.util.retry import Retry
@@ -558,7 +558,7 @@ async def get_project_type(req: ZoneRequest, request: Request):
     response_model = ZoneResponse,
     summary = "구역 선택 및 요약 집계"
 )
-async def get_zone(req: ZoneRequest, request: Request):
+async def get_zone(req: ZoneRequest, request: Request, session: Session = Depends(get_db)):
 
     #세션에서 user_id 반환
     user_id = request.session.get("user_id")
@@ -568,7 +568,9 @@ async def get_zone(req: ZoneRequest, request: Request):
         raise UnauthorizedException("로그인이 필요합니다.")
 
     #사용자 크레딧이 남아있는지 확인
-    await ensure_daily_credit_available(int(user_id))
+    unlimited = get_active_organization(session, int(user_id)) is not None
+    if not unlimited:
+        await ensure_daily_credit_available(int(user_id))
 
     try:
         parcels = []
@@ -928,8 +930,11 @@ async def get_zone(req: ZoneRequest, request: Request):
     }
 
     #실제 차감은 /contribution 계산과 응답 검증이 성공한 후에 진행
-    credits = await get_daily_credits(int(user_id))
-    result["credits_remaining"] = credits["credits_remaining"]
+    if unlimited:
+        result["credits_remaining"] = -1
+    else:
+        credits = await get_daily_credits(int(user_id))
+        result["credits_remaining"] = credits["credits_remaining"]
     result["credit_token"] = "pending"
     response = ZoneResponse.model_validate(result)
     response = response.model_copy(
