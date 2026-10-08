@@ -157,7 +157,7 @@ def build_sliders(
     #  실제 상한은 분양 세대수에 걸려 더 낮아질 수 있어서, /contribution 이
     #  calc.member_count_range 로 다시 계산한 값을 응답에 담는다 (용적률에 따라 바뀜)
     if household_count:
-        max_ratio = MEMBER_COUNT_MAX_RATIO.get(project_type, 1.25)
+        max_ratio = MEMBER_COUNT_MAX_RATIO.get(project_type, 1.0)
         sliders["member_count"] = {
             "value": household_count,
             "min": int(household_count * MEMBER_COUNT_MIN_RATIO),
@@ -172,15 +172,17 @@ def build_sliders(
     if measured_member_count:
         existing = sliders.get("member_count")
         low = int(measured_member_count * MEMBER_COUNT_MIN_RATIO)
-        high = int(measured_member_count * MEMBER_COUNT_MAX_RATIO.get(project_type, 1.25))
+        high = int(measured_member_count * MEMBER_COUNT_MAX_RATIO.get(project_type, 1.0))
         if existing:
             #세대수 기준 범위와 실측값을 모두 담을 수 있게 넓힌다
             low = min(low, existing["min"])
             high = max(high, existing["max"])
+        #기본값 = 최댓값 (전원 참여)
+        high = max(high, measured_member_count)
         sliders["member_count"] = {
-            "value": measured_member_count,
+            "value": high,
             "min": max(1, low),
-            "max": max(high, measured_member_count),
+            "max": high,
             "measured": True,
         }
 

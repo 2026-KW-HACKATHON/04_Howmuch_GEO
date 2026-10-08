@@ -280,6 +280,7 @@ export interface MetricRow {
     label: string;
     value: string;
     sliderKey?: string;
+    compact?: boolean;      //값이 길어 두 칸 격자에서 잘리는 항목 — 글자를 줄여 다 보이게 한다
 }
 
 const PYEONG = 3.3058;
@@ -326,6 +327,7 @@ export function buildMetrics(
             //  engine_defaults.commercial_price_ratio 와 같은 값을 써야 한다
             value: `${(commercialRatio * 100).toFixed(0)}% · ${Math.round(generalPrice * 0.7 * PYEONG).toLocaleString()}만원/평`,
             sliderKey: 'commercial_ratio',
+            compact: true,
         },
         {
             label: '용적률',
@@ -370,6 +372,7 @@ export function buildMetrics(
                   + (memberPriceRatio ? ` · 일반분양가의 ${Math.round(memberPriceRatio * 100)}%` : '')
                 : '–',
             sliderKey: 'member_price_ratio',
+            compact: true,
         },
     ];
 }

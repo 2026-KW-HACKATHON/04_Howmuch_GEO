@@ -99,6 +99,7 @@ export default function ContributionPanel({
     //예상 분담금은 최종 인가(준공) 때 정산되는 금액이다.
     //  사업 기간 슬라이더는 [분담금 고시일, 최종 인가] 이고, 예전 백엔드는 숫자 하나(고시일)를 내려준다
     const timeline = result?.timeline ?? null;
+    const projectType = timeline?.project_type ?? null;   //재개발 / 재건축 (사이드바 안내 문구에 쓴다)
     const periodValue = sliders.project_period_years?.value;
     const completeYears = timeline?.complete_years
         ?? (Array.isArray(periodValue) ? periodValue[1] : Number(periodValue ?? 0));
@@ -276,23 +277,11 @@ export default function ContributionPanel({
                         onClick={() => focusSlider(metric.sliderKey)}
                         className="-mx-1.5 flex w-[calc(100%+12px)] items-baseline justify-between gap-1.5 rounded px-1.5 py-1 text-left hover:bg-blue-50"
                     >
-                        <span className="whitespace-nowrap text-[12.5px] text-gray-500">{metric.label}</span>
-                        <span className="whitespace-nowrap text-[12.5px] font-semibold tabular-nums text-gray-900">{metric.value}</span>
+                        <span className={`whitespace-nowrap text-gray-500 ${metric.compact ? 'text-[10.5px] tracking-tight' : 'text-[12.5px]'}`}>{metric.label}</span>
+                        <span className={`whitespace-nowrap font-semibold tabular-nums text-gray-900 ${metric.compact ? 'text-[10.5px] tracking-tight' : 'text-[12.5px]'}`}>{metric.value}</span>
                     </button>
                 ))}
             </div>
-
-            {/* 주의 문구 + 계산식 */}
-            <p className="px-5 pb-1.5 text-[11.5px] text-gray-400">
-                위 값은 모두 <b>선택한 필지</b> 기준 예측값입니다.
-            </p>
-            <p className="mx-5 mb-3 rounded-lg bg-gray-50 px-2.5 py-2 text-[11px] leading-relaxed text-gray-400">
-                비례율 = (종후자산 − 총사업비) ÷ 종전자산 &nbsp;·&nbsp;
-                권리가액 = 종전자산 × 비례율 &nbsp;·&nbsp;
-                <b className="text-gray-500">분담금 = 조합원분양가 − 권리가액</b>
-                <br />
-                재건축초과이익환수(재초환)는 재건축만 대상이라 재개발 분담금에는 붙지 않습니다 (재초환법 제2조).
-            </p>
 
             {/* 계산에 반영된 정비계획 조건 : 사업성 보정계수 · 공공기여(상한용적률 산식·종상향) */}
             {((businessCorrection && businessCorrection.factor > 1)
@@ -619,13 +608,11 @@ export default function ContributionPanel({
 
                 <Slider sliders={visibleSliders} onChange={onSliderChange} onAuto={onSliderAuto} />
 
-                {/* 예측 기준 시점 */}
+                {/* 예측 기준 시점 · 안내 (재초환 문구는 재개발일 때만 — 재건축은 결과 경고에 따로 뜬다) */}
                 <p className="mt-1 border-t border-dashed border-gray-200 pt-2.5 text-[10.5px] leading-relaxed text-gray-400">
-                    - 공사비·일반분양가 기본값은 <b>{targetYm}</b> 기준 예측값,
-                    건설공사비지수는 시점 보정, 분양가는 인근 분양 사례 기준
-                </p>
-                <p className="mt-1 pt-2.5 text-[10.5px] leading-relaxed text-gray-400">
-                    - 예측값입니다. 확정 분담금은 감정평가·관리처분계획 인가 후 결정되며, 금액은 미래 시점 명목가입니다.
+                    - 공사비·일반분양가 기본값은 <b>{targetYm}</b> 기준 예측값, 건설공사비지수는 시점 보정, 분양가는 인근 분양 사례 기준입니다.
+                    예측값이며, 확정 분담금은 감정평가·관리처분계획 인가 후 결정되고 금액은 미래 시점 명목가입니다.
+                    {projectType === '재개발' && <> 해당 프로그램의 제시가격은 재초환을 명시하지 않습니다.</>}
                 </p>
             </div>
         </div>

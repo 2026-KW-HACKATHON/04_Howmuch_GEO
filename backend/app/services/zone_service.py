@@ -142,8 +142,9 @@ async def set_cached_land(pnu: str, data: dict):
 #  land:{pnu} 에 합치지 않고 따로 둔다 — 이미 7일 TTL 로 캐시된 기존 항목을 깨지 않고,
 #  건축물대장은 거의 변하지 않아 더 긴 TTL 을 줄 수 있다
 #  키 bld2: — 2026-10-07 기타용도·층수(재조달원가 상대지수용)를 더하면서 바꿨다. 예전 bld: 항목에는 그 필드가 없다
+#  키 bld3: — 2026-10-08 대표 동을 세대가 있는 동에서 고르도록 바꿨다. bld2: 항목은 지하주차장 동이 대표일 수 있다
 async def get_cached_building(pnu: str) -> Optional[dict]:
-    cache_key = f"bld2:{pnu}"
+    cache_key = f"bld3:{pnu}"
 
     try:
         val = await redis_client.get(cache_key)
@@ -165,7 +166,7 @@ async def set_cached_building(pnu: str, data: dict) -> None:
     if not data:
         return
 
-    cache_key = f"bld2:{pnu}"
+    cache_key = f"bld3:{pnu}"
 
     try:
         serialized_data = json.dumps(data, ensure_ascii=False, default=str)

@@ -632,14 +632,18 @@ export function useModelPredictForm({
     }, [zoneCalculated, zoneInfo, calculate]);
 
     //조합원 수 슬라이더 범위 갱신 : 용적률·상가비율에 따라 분양 세대수가 바뀌면 상한도 바뀐다
-    //  범위를 벗어난 값(구역 분석 직후의 임시값)은 최솟값으로 맞춘다
+    //  기본값은 최댓값(전원 참여)이다 — 값이 상한에 붙어 있었으면 새 상한을 따라가고,
+    //  사용자가 낮춘 값은 범위 안에서 그대로 둔다. 범위를 벗어난 값(구역 분석 직후의 임시값)은 범위로 자른다
     useEffect(() => {
         const range = memberRange;
         if (!range) return;
 
         setSliderData((prev) => {
             const current = prev.member_count;
-            const value = Math.min(Math.max(Number(current?.value ?? range.min), range.min), range.max);
+            const atMax = !current || Number(current.value) >= Number(current.max ?? Infinity);
+            const value = atMax
+                ? range.max
+                : Math.min(Math.max(Number(current?.value ?? range.max), range.min), range.max);
 
             //같은 범위면 상태를 그대로 둔다 (재계산 반복 방지)
             if (current && current.min === range.min && current.max === range.max && current.value === value) {

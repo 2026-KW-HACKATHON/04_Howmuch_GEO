@@ -413,14 +413,14 @@ def solve_member_price_ratio(params: ProjectParams, alloc: Allocation, target_ra
 
 
 # 조합원 수 슬라이더 범위
-#  기본값 = 세대수(전원 참여, 가장 보수적)
+#  기본값 = 상한 = 세대수(전원 참여). 실제 사업은 대부분 참여한다 (2026-10-08 : 기본값을 최댓값으로)
 #  하한   = 세대수 × 0.75 (조합설립 동의율 법정 최소 75%)
-#  상한   = 재건축 세대수 × 1.0 / 재개발 세대수 × 1.25
-#           (재개발은 나대지·도로지분·무허가건축물 소유자도 조합원이 된다)
+#  재개발도 상한을 세대수(실측 조합원 수)로 둔다. 예전 1.25 배(나대지·도로지분·무허가 소유자 여유분)는
+#  근거 수치가 없었고, 실측값이 이미 나대지 필지를 1명씩 센다
 #  단, 분양 세대수를 넘으면 조합원에게 줄 집이 모자라 사업이 성립하지 않으므로 거기서 자른다.
 #  분양 세대수는 용적률에 따라 바뀌므로 이 함수는 계산할 때마다 다시 불러야 한다.
 MEMBER_COUNT_MIN_RATIO = 0.75
-MEMBER_COUNT_MAX_RATIO = {ProjectType.RECONSTRUCTION: 1.0, ProjectType.REDEVELOPMENT: 1.25}
+MEMBER_COUNT_MAX_RATIO = {ProjectType.RECONSTRUCTION: 1.0, ProjectType.REDEVELOPMENT: 1.0}
 
 
 @dataclass
@@ -435,7 +435,7 @@ def member_count_range(
     params: ProjectParams, alloc: Allocation, household_count: int
 ) -> MemberCountRange:
     sale_count = sum(u.count for u in alloc.unit_types)
-    ratio = MEMBER_COUNT_MAX_RATIO.get(params.project_type, 1.25)
+    ratio = MEMBER_COUNT_MAX_RATIO.get(params.project_type, 1.0)
 
     raw_max = int(household_count * ratio)
     max_count = min(raw_max, sale_count)          # 분양 세대수를 넘을 수 없다
