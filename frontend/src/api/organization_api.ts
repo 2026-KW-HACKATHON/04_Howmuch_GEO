@@ -42,7 +42,7 @@ export interface OrganizationScenario {
     map_view: OrganizationMapView;
     zoning: string;
     target_ym: string;
-    sliders: Record<string, number | string>;
+    sliders: Record<string, number | string | number[]>;     //사업기간은 [고시일, 최종 인가]
     unit_mix: { exclusive_area_m2: number; household_ratio: number }[] | null;
     rental_exclusive_area_m2: number | null;
 }

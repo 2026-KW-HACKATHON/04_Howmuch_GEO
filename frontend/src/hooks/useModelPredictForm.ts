@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { SliderValue, SlidersState } from '../hooks/useSlider';
 import { getProjectTypePreview } from '../api/realestate_api';
+import { ParcelInfo } from '../utils/parcel';
+import { OrganizationMapView, OrganizationScenario } from '../api/organization_api';
 import {
     BusinessCorrection, ContributionMix, ContributionResult, CONTRIBUTION_PRESETS, MemberCountRange, MAX_UNIT_TYPES, ReconstructionInfo, UnitMixEntry,
     UpzoningInfo, ZoneInfo, ZonePriorAsset,
@@ -379,8 +381,11 @@ export function useModelPredictForm({
             map_view: mapView,
             zoning: selectedZoning,
             target_ym: targetYm,
+            //조합원분양가 비율 자동(null)은 저장하지 않는다 — 불러올 때 기본값(자동)으로 남는다
             sliders: Object.fromEntries(
-                Object.entries(sliderData).map(([key, config]) => [key, config.value])
+                Object.entries(sliderData)
+                    .filter(([, config]) => config.value !== null && config.value !== undefined)
+                    .map(([key, config]) => [key, config.value as SliderValue])
             ),
             unit_mix: unitMix?.length ? unitMix : null,
             rental_exclusive_area_m2: appliedRentalExclusive,

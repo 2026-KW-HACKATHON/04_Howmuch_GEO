@@ -3,6 +3,9 @@ from app.config.engine_defaults import (
 )
 from app.cache.redis import redis_client
 from app.services.credit_service import ensure_daily_credit_available, get_daily_credits, issue_credit_token
+from app.services.organization_service import get_active_organization
+from app.database.database_connection import get_db
+from sqlalchemy.orm import Session
 from app.services.building_ledger_service import elapsed_years, fetch_apartment_complex, fetch_building
 from app.services.zone_service import (
     get_cached_trades, set_cached_trades, get_cached_land, set_cached_land,
