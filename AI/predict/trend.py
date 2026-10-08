@@ -51,8 +51,10 @@ def months(ym: str) -> int:
     return year * 12 + month
 
 
+#months() 의 역함수. months() 가 "year*12 + month(1~12)" 라서 1 을 빼고 나눠야 한다
+#  (예전 식 total//12 는 12월을 다음 해로 넘겼다 : 2026-12 → "2027-12". 표시 문자열에만 쓰여 계산엔 영향이 없었다)
 def _ym(total: int) -> str:
-    return f"{total // 12}-{total % 12 or 12:02d}"
+    return f"{(total - 1) // 12}-{(total - 1) % 12 + 1:02d}"
 
 
 #시계열에서 연평균 상승률을 뽑는다
@@ -201,3 +203,32 @@ def index_at(
     #  long_run_rate 를 주면 장기 연율로 수렴시킨다 (extrapolate 참조)
     m_last, v_last = points[-1]
     return v_last * extrapolate(target - m_last, rate, long_run_rate)
+
+
+
+#[start_ym, end_ym) 구간에 균등하게 지출될 때, base_ym 대비 평균 배수.
+#  공사비 기성은 착공~준공에 걸쳐 나눠 지급되고, 도급계약의 물가변동 조정은 지급 시점 물가를 따른다.
+#  그래서 "계약 시점 단가 × 이 배수" 가 실제로 지출되는 공사비가 된다 (확정 이후 증액).
+#  excess_rate : 지수 위에 얹는 연 초과 상승률 — 계약단가가 투입원가보다 빨리 오르는 몫
+#  월 단위 중점으로 평균해 구간 경계에서 튀지 않게 한다
+def average_index_ratio(
+    start_ym: str,
+    end_ym: str,
+    base_ym: str,
+    index: dict[str, float],
+    annual_rate: float | None = None,
+    long_run_rate: float | None = None,
+    excess_rate: float = 0.0,
+) -> float:
+    rate = annual_rate if annual_rate is not None else estimate_annual_rate(index).annual_rate
+    base = index_at(base_ym, index, rate, long_run_rate)
+    m_base = months(base_ym)
+    m0, m1 = months(start_ym), months(end_ym)
+    if m1 <= m0:
+        m1 = m0 + 1
+
+    total = 0.0
+    for m in range(m0, m1):
+        t = (m + 0.5 - m_base) / 12
+        total += index_at(_ym(m), index, rate, long_run_rate) / base * (1 + excess_rate) ** t
+    return total / (m1 - m0)

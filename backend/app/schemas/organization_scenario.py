@@ -1,6 +1,8 @@
 from math import isfinite
 from pydantic import BaseModel, Field, field_validator, model_validator
 from app.schemas.realestate.realestate_request import ParcelHintDTO, UnitMixEntryDTO
+from app.config.engine_defaults import COMPLETION_GAP_MIN, PROJECT_PERIOD_TRACK
+from AI.engine.rental_cost import FLOOR_BANDS
 
 #조직 Map View 스키마
 class OrganizationMapView(BaseModel):
@@ -15,7 +17,7 @@ class OrganizationScenarioRequest(BaseModel):
     map_view: OrganizationMapView
     zoning: str = Field(..., min_length=1, max_length=40)
     target_ym: str = Field(..., pattern=r"^\d{4}-\d{2}$")
-    sliders: dict[str, int | float | str]
+    sliders: dict[str, int | float | str | list[int | float]]
     unit_mix: list[UnitMixEntryDTO] | None = Field(None, max_length=4)
     rental_exclusive_area_m2: float | None = Field(None, gt=0, le=200)
 
@@ -51,13 +53,13 @@ class OrganizationScenarioRequest(BaseModel):
 
     @field_validator("sliders")
     @classmethod
-    def validate_sliders(cls, sliders: dict[str, int | float | str]) -> dict[str, int | float | str]:
+    def validate_sliders(cls, sliders: dict[str, int | float | str | list[int | float]]) -> dict[str, int | float | str | list[int | float]]:
         allowed_keys = {
             "floor_area_ratio",
             "member_count",
             "member_price_ratio",
             "other_cost_ratio",
-            "parking_per_household",
+            "parking_margin",
             "commercial_ratio",
             "construction_cost_per_pyeong",
             "general_price_per_m2",
@@ -66,13 +68,20 @@ class OrganizationScenarioRequest(BaseModel):
         }
         if not sliders or not sliders.keys() <= allowed_keys:
             raise ValueError("지원하지 않는 슬라이더 값이 포함되어 있습니다.")
-        node_values = {
-            "rental_floor_band": {"5층 이하", "6~10층", "11~20층", "21층 이상"},
-            "project_period_years": {11, 13, 16, 18},
-        }
         for key, value in sliders.items():
-            if key in node_values:
-                if value not in node_values[key]:
+            if key == "rental_floor_band":
+                #층수 구간 (슬라이더 options 와 같은 목록)
+                if value not in FLOOR_BANDS:
+                    raise ValueError(f"{key} 슬라이더 값이 올바르지 않습니다.")
+            elif key == "project_period_years":
+                #손잡이 두 개 [분담금 고시일, 최종 인가] (년). 트랙 안 · 최소 간격 이상
+                track_min, track_max = PROJECT_PERIOD_TRACK
+                if (
+                    not isinstance(value, list) or len(value) != 2
+                    or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v) for v in value)
+                    or not track_min <= value[0] <= value[1] <= track_max
+                    or value[1] - value[0] < COMPLETION_GAP_MIN
+                ):
                     raise ValueError(f"{key} 슬라이더 값이 올바르지 않습니다.")
             elif isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
                 raise ValueError(f"{key} 슬라이더 값은 유한한 숫자여야 합니다.")

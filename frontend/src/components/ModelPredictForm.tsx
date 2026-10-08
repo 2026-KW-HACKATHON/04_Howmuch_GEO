@@ -59,18 +59,31 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
         zoningOptions,
         handleSelectZoning,
         handleSliderChange,
+        handleSliderAuto,
         unitMix,
         handleUnitMixChange,
         rentalExclusive,
         handleRentalExclusiveChange,
         handleApplyUnitMix,
         unitMixDirty,
+        contributionMix,
+        handleContributionMixChange,
+        handleApplyContributionMix,
+        contributionMixDirty,
         priorAsset,
         ownerPnu,
         handleSelectOwnerPnu,
         ownerExclusive,
         handleOwnerExclusiveChange,
         zoningStale,
+        upzoning,
+        upzoningPreview,
+        businessCorrection,
+        projectType,
+        projectTypeReason,
+        previewType,
+        previewTypeReason,
+        ownerData,
         handleZoneData,
         createSharedScenario,
         loadSharedScenario,
@@ -261,6 +274,18 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
                     <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-slate-500">1</span>
                     <span className="text-[12.5px] text-slate-500">선택한 필지</span>
                     <span className="ml-auto text-[12.5px] font-semibold text-slate-900">{selectedPnus.length}개</span>
+                    {/* 사업 유형 : 필지를 고르면 바로 미리 판정해 띄우고(크레딧 없음), 구역 분석 결과가 오면 그 값으로 바뀐다
+                        (아파트 단지만 → 재건축, 아파트 외 필지 포함 → 재개발). 근거는 마우스를 올리면 보인다 */}
+                    {(projectType ?? previewType) && (
+                        <span
+                            title={projectType ? projectTypeReason : `${previewTypeReason} (분석 전 미리 판정)`}
+                            className={`rounded-md px-1.5 py-0.5 text-[11px] font-semibold ${
+                                (projectType ?? previewType) === '재건축' ? 'bg-violet-50 text-violet-700' : 'bg-emerald-50 text-emerald-700'
+                            }`}
+                        >
+                            {projectType ?? previewType}
+                        </span>
+                    )}
                 </div>
 
                 {/* 2단계 : 용도지역 선택
@@ -289,9 +314,26 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
                                 }`}
                             >
                                 {z.replace('지역', '')}
+                                {/* 필지 원래 용도지역의 면적가중 평균 단계. 이보다 높게 고르면 종상향이다 */}
+                                {upzoning?.base_zoning === z && (
+                                    <span className="ml-1 rounded bg-slate-100 px-1 text-[10px] font-normal text-slate-500">현황</span>
+                                )}
                             </button>
                         ))}
                     </div>
+
+                    {/* 종상향 미리보기 : 고르는 즉시 기준 대비 몇 단계인지 보여준다.
+                        공공기여(대지 축소)는 계산 버튼으로 구역을 다시 분석할 때 반영된다 */}
+                    {upzoningPreview && (
+                        <p className={`mt-2 text-[11px] leading-relaxed ${upzoningPreview.steps > 0 ? 'text-blue-700' : 'text-slate-500'}`}>
+                            {upzoningPreview.steps > 0
+                                ? <>현황({upzoningPreview.baseZoning.replace('지역', '')})보다 <b>{upzoningPreview.steps}단계 종상향</b>입니다.
+                                    대지 일부를 공공기여로 내놓는 것으로 계산됩니다.</>
+                                : upzoningPreview.steps < 0
+                                    ? <>현황({upzoningPreview.baseZoning.replace('지역', '')})보다 낮은 용도지역입니다. 공공기여 없이 계산됩니다.</>
+                                    : <>필지 현황 용도지역(면적 평균)과 같습니다. 종상향 없이 계산됩니다.</>}
+                        </p>
+                    )}
                 </div>
 
                 {/* 3단계 : 계산 버튼
@@ -326,18 +368,26 @@ const ModelPredictForm: React.FC<ModelPredictFormProps> = ({
                     metrics={metrics}
                     sliders={sliderData}
                     onSliderChange={handleSliderChange}
+                    onSliderAuto={handleSliderAuto}
                     unitMix={unitMix}
                     onUnitMixChange={handleUnitMixChange}
                     rentalExclusive={rentalExclusive}
                     onRentalExclusiveChange={handleRentalExclusiveChange}
                     onApplyUnitMix={handleApplyUnitMix}
                     unitMixDirty={unitMixDirty}
+                    contributionMix={contributionMix}
+                    onContributionMixChange={handleContributionMixChange}
+                    onApplyContributionMix={handleApplyContributionMix}
+                    contributionMixDirty={contributionMixDirty}
                     priorAsset={priorAsset}
                     ownerPnu={ownerPnu}
                     onSelectOwnerPnu={handleSelectOwnerPnu}
                     ownerExclusive={ownerExclusive}
                     onOwnerExclusiveChange={handleOwnerExclusiveChange}
                     zoningStale={zoningStale}
+                    upzoning={upzoning}
+                    businessCorrection={businessCorrection}
+                    desiredUnit={ownerData.desired_unit}
                     targetYm={targetYm}
                     loading={loading}
                 />

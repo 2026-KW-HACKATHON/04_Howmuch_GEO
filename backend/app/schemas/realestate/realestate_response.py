@@ -52,20 +52,42 @@ class SlidersModel(BaseModel):
     extra_sliders: Optional[Dict[str, Any]] = None
 
 
+#사업 유형 미리 판정 응답 (필지를 고르는 즉시 배지를 띄운다 — 크레딧 없음)
+class ProjectTypeResponse(BaseModel):
+    project_type: str = Field(..., description="재개발 · 재건축 (/zone 과 같은 규칙 — AI/engine/project_type.py)")
+    project_type_reason: str = Field(..., description="판정 근거 문장 (배지 툴팁)")
+
+
 #Zone API 응답 스키마
 class ZoneResponse(BaseModel):
     zone: Dict[str, Any] = Field(..., description="구역 요약 정보 (asdict(zone))")
-    far_base: float = Field(..., description="기준 용적률 (far_min)")
+    far_base: float = Field(..., description="정비계획 상한용적률 (%). 제54조 초과용적률의 기준점 (4단 상한, 보정계수 반영)")
     target_ym: str = Field(..., description="예측 대상 년월 (YYYY-MM)")
     zoning_options: List[str] = Field(..., description="선택 가능한 용도지역 목록")
     selected_zoning: Optional[str] = Field(None, description="사용자가 선택한 용도지역")
     sliders: Dict[str, Any] = Field(..., description="슬라이더 설정 객체")
+    project_type: str = Field("재개발", description="사업 유형 판정 : 아파트 단지(들)만 고르면 재건축, 아파트 외 사유 필지가 섞이면 재개발")
+    project_type_reason: str = Field("", description="판정 근거 (선택한 필지 칸 옆 표시용)")
+    reconstruction: Optional[Dict[str, Any]] = Field(
+        None,
+        description="재건축 단지 정보 (세대수·단지 대지면적·현황용적률·공동주택가격 합계·전용면적별 호당 공시가격). "
+                    "/contribution 에 그대로 돌려보낸다. 재개발이면 null",
+    )
     cost_prediction: Dict[str, Any] = Field(..., description="공사비 예측 데이터")
     prior_asset: Optional[Dict[str, Any]] = Field(
         None,
         description="구역 종전자산(토지분+건물분)과 실측 조합원 수. 건축물대장 전수 집계 결과",
     )
     sale_prediction: Dict[str, Any] = Field(..., description="분양가 예측 데이터")
+    business_correction: Optional[Dict[str, Any]] = Field(
+        None,
+        description="사업성 보정계수 (서울시 평균 공시지가 ÷ 구역 '대' 필지 평균, 1.00~2.00). 허용·상한 용적률을 올린다",
+    )
+    upzoning: Optional[Dict[str, Any]] = Field(
+        None,
+        description="종상향 판정. 기준 용도지역(필지 원래 용도지역의 면적가중 평균 단계)보다 높게 고르면 "
+                    "최소 공공기여율이 붙는다 (노드별 실제 비율은 sliders.floor_area_ratio.contributions)",
+    )
     credits_remaining: int = Field(..., description="남은 일일 크레딧")
     credit_token: str = Field(..., description="성공한 분담금 계산에서 크레딧을 차감하기 위한 토큰")
 
@@ -138,5 +160,10 @@ class ContributionResponse(BaseModel):
         0.0, description="계산에 쓴 임대 1세대 전용면적(㎡). 세부 설정 입력란에 되돌려 보여준다"
     )
     member_count_range: MemberCountRange = Field(..., description="조합원 수 슬라이더 가동 범위")
+    timeline: Optional[Dict[str, Any]] = Field(
+        None,
+        description="사업 일정(고시일·착공·최종 인가)과 시점별 값. 관리처분 확정 분담금 → 준공 정산 분담금의 "
+                    "단계별 변화(분양 시점 반영 · 물가변동 · 비물가 초과)와 조합원 분양가(고시일 확정)를 담는다",
+    )
     warnings: List[str] = Field(default_factory=list, description="사업성 계산 경고 메시지")
     credits_remaining: int = Field(..., description="남은 일일 크레딧")

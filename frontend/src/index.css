@@ -1,1 +1,40 @@
 @import "tailwindcss";
+
+/* 손잡이 두 개짜리 범위 슬라이더 (사업 기간 : 분담금 고시일 ~ 최종 인가)
+   range input 두 개를 겹쳐 둔다. 트랙은 클릭을 통과시키고 손잡이만 잡히게 해야
+   아래쪽 input 의 손잡이도 잡을 수 있다 */
+.range-dual {
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+.range-dual::-webkit-slider-runnable-track { background: transparent; }
+.range-dual::-moz-range-track { background: transparent; }
+.range-dual::-webkit-slider-thumb {
+  pointer-events: auto;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  border: 2px solid #fff;
+  background: #2563eb;
+  box-shadow: 0 0 0 1px #2563eb;
+  cursor: pointer;
+}
+.range-dual::-moz-range-thumb {
+  pointer-events: auto;
+  width: 12px;
+  height: 12px;
+  border-radius: 9999px;
+  border: 2px solid #fff;
+  background: #2563eb;
+  box-shadow: 0 0 0 1px #2563eb;
+  cursor: pointer;
+}
+/* 바깥 손잡이(최종 인가)는 색을 달리해 두 시점을 구분한다 */
+.range-dual-outer::-webkit-slider-thumb { background: #1e293b; box-shadow: 0 0 0 1px #1e293b; }
+.range-dual-outer::-moz-range-thumb { background: #1e293b; box-shadow: 0 0 0 1px #1e293b; }
+.range-dual:disabled::-webkit-slider-thumb { cursor: not-allowed; }
+.range-dual:disabled::-moz-range-thumb { cursor: not-allowed; }

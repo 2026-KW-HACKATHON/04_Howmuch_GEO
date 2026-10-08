@@ -1,14 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { SlidersState } from '../hooks/useSlider';
+import { SliderValue, SlidersState } from '../hooks/useSlider';
+import { getProjectTypePreview } from '../api/realestate_api';
 import { ParcelInfo } from '../utils/parcel';
 import { OrganizationMapView, OrganizationScenario } from '../api/organization_api';
 import {
-    ContributionResult, MemberCountRange, MAX_UNIT_TYPES, UnitMixEntry,
-    ZoneInfo, ZonePriorAsset,
+    BusinessCorrection, ContributionMix, ContributionResult, CONTRIBUTION_PRESETS, MemberCountRange, MAX_UNIT_TYPES, ReconstructionInfo, UnitMixEntry,
+    UpzoningInfo, ZoneInfo, ZonePriorAsset,
 } from './useContribution';
 
 //슬라이더를 움직인 뒤 다시 계산하기까지 기다리는 시간
 const RECALC_DEBOUNCE_MS = 250;
+
+//필지 선택이 멈춘 뒤 사업 유형 미리 판정을 부르기까지 기다리는 시간 (필지를 연달아 고르는 동안 매번 부르지 않게)
+const PREVIEW_DEBOUNCE_MS = 600;
 
 //세대수 자료가 없을 때 쓰는 임시 조합원 수 슬라이더
 //  첫 계산 응답의 member_count_range 로 범위가 교체된다 (분양 세대수 상한 반영)
@@ -24,6 +28,24 @@ const DEFAULT_ZONING_OPTIONS = [
     '제3종일반주거지역',
     '준주거지역',
 ];
+
+//종상향 판정용 용도지역 사다리 (아래 → 위). AI/engine/zone.py ZONING_LADDER 와 같아야 한다
+const ZONING_LADDER = [
+    '제1종전용주거지역',
+    '제2종전용주거지역',
+    '제1종일반주거지역',
+    '제2종일반주거지역',
+    '제3종일반주거지역',
+    '준주거지역',
+];
+
+//용도지역 선택 즉시 보여주는 종상향 미리보기.
+//  기준 용도지역(필지 원래 용도지역의 면적가중 평균)은 첫 구역 분석 뒤에야 알 수 있다
+export interface UpzoningPreview {
+    baseZoning: string;
+    selectedZoning: string;
+    steps: number;      //0 이하면 종상향 아님
+}
 
 //예측 폼 Hook Props
 export interface ModelPredictFormProps {
@@ -90,6 +112,12 @@ export function useModelPredictForm({
     const [appliedUnitMix, setAppliedUnitMix] = useState<UnitMixEntry[] | null>(null);
     const [appliedRentalExclusive, setAppliedRentalExclusive] = useState<number | null>(null);
 
+    //공공기여 기부면적 비율 (세부 설정, %) : 토지 / 공공임대 건축물 / 현금. 버튼은 비율 프리셋이다.
+    //  평형 구성처럼 입력만 해서는 계산하지 않고 「적용」을 눌러야 반영한다.
+    //  contributionMix 가 입력 중인 값, appliedContributionMix 가 계산에 쓰는 값이다 (기본 토지 100%)
+    const [contributionMix, setContributionMix] = useState<ContributionMix>(CONTRIBUTION_PRESETS[0].mix);
+    const [appliedContributionMix, setAppliedContributionMix] = useState<ContributionMix>(CONTRIBUTION_PRESETS[0].mix);
+
     //구역 분석 완료 여부
     const [zoneCalculated, setZoneCalculated] = useState<boolean>(false);
 
@@ -102,16 +130,28 @@ export function useModelPredictForm({
     const [sliderData, setSliderData] = useState<SlidersState>({
         floor_area_ratio: { value: 200, min: 200, max: 250 },
         member_count: MEMBER_COUNT_FALLBACK,
-        member_price_ratio: { value: 0.8, min: 0.75, max: 0.95 },
-        other_cost_ratio: { value: 0.35, min: 0.25, max: 0.45 },
-        parking_per_household: { value: 1.3, min: 1.0, max: 2.0 },
+        //조합원 분양가 비율 : 자동(관리처분 비례율 100% 역산). 값은 /contribution 응답으로 채워진다 (zone 응답으로 교체된다)
+        member_price_ratio: { value: null, min: 0, max: 1, auto: true },
+        //기타사업비 비율 : 관리처분 단계 중앙값 (재개발 0.707 · 재건축 0.474), 범위 0.19~0.75 (서버 engine_defaults 와 같은 값, zone 응답으로 교체된다)
+        other_cost_ratio: { value: 0.707, min: 0.19, max: 0.75 },
+        //주차 여유율 = 실제 ÷ 법정 주차대수 (법정 대수는 서버가 평형 구성에서 계산한다)
+        parking_margin: { value: 1.29, min: 1.0, max: 1.59 },
         //상한은 용도지역별로 다르다 (전용 0.03 / 1종 0.05 / 2·3종 0.10 / 준주거 0.30).
         //  서버가 zone 응답에서 대표 용도지역에 맞는 max 를 내려주므로 여기 값은 그때 교체된다
         commercial_ratio: { value: 0.02, min: 0.0, max: 0.1 },
         construction_cost_per_pyeong: { value: 850, min: 700, max: 1000 },
         general_price_per_m2: { value: 998.25, min: 700, max: 1300 },
-        rental_floor_band: { value: '11~20층', options: ['5층 이하', '6~10층', '11~20층', '21층 이상'] },
-        project_period_years: { value: 13, options: [11, 13, 16, 18] },
+        //임대동 층수 : 기본형건축비 고시 표의 아홉 구간. 서버 rental_cost.FLOOR_BANDS 와 같은 값 (zone 응답으로 교체된다)
+        rental_floor_band: {
+            value: '16~25층',
+            options: ['5층 이하', '6~10층', '11~15층', '16~25층', '26~30층', '31~35층', '36~40층', '41~45층', '46~49층'],
+        },
+        //사업 기간 : [분담금 고시일, 최종 인가]. 서버 slider_builder 와 같은 기본값 (zone 응답으로 교체된다)
+        project_period_years: {
+            value: [13, 21], min: 10, max: 30, step: 1, range: true,
+            ticks: [11, 13, 16, 18], gap: { value: 8, min: 3, max: 20 },
+            labels: ['분담금 고시일', '최종 인가'],
+        },
     });
 
     //조합원 수 범위 (/contribution 응답). 슬라이더 범위를 맞추는 데 쓴다
@@ -130,8 +170,46 @@ export function useModelPredictForm({
     //결과 및 로딩 상태 useState 영역
     const [zoneInfo, setZoneInfo] = useState<ZoneInfo | null>(null);
 
-    //완화 기준 용적률 (/zone 의 far_base). 4단 체계면 기준용적률이고, 없으면 far_min 이다
+    //제54조 임대 의무의 기준점 (/zone 의 far_base) = 정비계획 상한용적률 (보정계수 반영)
     const [farBase, setFarBase] = useState<number | null>(null);
+
+    //종상향 판정과 사업성 보정계수 (/zone 응답). 공공기여율은 /contribution 에 그대로 돌려보낸다
+    const [upzoning, setUpzoning] = useState<UpzoningInfo | null>(null);
+    const [businessCorrection, setBusinessCorrection] = useState<BusinessCorrection | null>(null);
+
+    //사업 유형 판정 (/zone) : 아파트 단지(들)만 고르면 재건축, 아파트 외 사유 필지가 섞이면 재개발.
+    //  선택한 필지 칸의 개수 옆에 띄우고, 재건축 단지 정보는 /contribution 에 그대로 돌려보낸다
+    const [projectType, setProjectType] = useState<string | null>(null);
+    const [projectTypeReason, setProjectTypeReason] = useState<string>('');
+
+    //사업 유형 미리 판정 (필지를 고르는 즉시, 분석 전). 분석하면 projectType(최종)이 이 값을 대신한다
+    const [previewType, setPreviewType] = useState<string | null>(null);
+    const [previewTypeReason, setPreviewTypeReason] = useState<string>('');
+
+    //필지 선택이 바뀌면 잠깐 기다렸다가 판정만 받아 온다 (크레딧 없음, 서버 캐시).
+    //  미리보기라 실패해도 분석 흐름에는 영향이 없다 — 배지만 안 뜬다
+    useEffect(() => {
+        setPreviewType(null);
+        setPreviewTypeReason('');
+        if (selectedPnus.length === 0) return;
+        let cancelled = false;
+        const timer = setTimeout(async () => {
+            try {
+                const data = await getProjectTypePreview(selectedPnus);
+                if (!cancelled) {
+                    setPreviewType(data.project_type ?? null);
+                    setPreviewTypeReason(data.project_type_reason ?? '');
+                }
+            } catch {
+                //배지만 띄우지 않는다
+            }
+        }, PREVIEW_DEBOUNCE_MS);
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [selectedPnus]);
+    const [reconstruction, setReconstruction] = useState<ReconstructionInfo | null>(null);
     const [creditToken, setCreditToken] = useState<string | null>(null);
     const [calcResult, setCalcResult] = useState<ContributionResult | null>(null);
     const [loading, setLoading] = useState<boolean>(false);
@@ -161,15 +239,22 @@ export function useModelPredictForm({
     };
 
     //슬라이더 값 변경 Handler
-    //  노드 슬라이더(임대동 층수)는 문자열 값을 쓰므로 number 로 좁히면 안 된다
-    const handleSliderChange = (key: string, newValue: number | string) => {
+    //  노드 슬라이더(임대동 층수)는 문자열, 범위 슬라이더(사업 기간)는 [고시일, 최종 인가] 라 number 로 좁히면 안 된다
+    const handleSliderChange = (key: string, newValue: SliderValue) => {
         setSliderData((prev: any) => ({
             ...prev,
             [key]: {
                 ...prev[key],
                 value: newValue,
+                //자동 슬라이더(조합원 분양가 비율)는 손잡이를 움직이는 순간 사용자 값이 된다
+                ...(prev[key]?.auto !== undefined ? { auto: false } : {}),
             },
         }));
+    };
+
+    //자동 슬라이더를 다시 자동으로 돌린다 (조합원 분양가 비율 : 관리처분 비례율 100% 역산)
+    const handleSliderAuto = (key: string) => {
+        setSliderData((prev: any) => (prev[key] ? { ...prev, [key]: { ...prev[key], auto: true } } : prev));
     };
 
     //희망 평형 선택 Handler (패널의 평형 버튼)
@@ -193,6 +278,18 @@ export function useModelPredictForm({
         setAppliedUnitMix(unitMix);
         setAppliedRentalExclusive(rentalExclusive);
     };
+
+    //공공기여 비율 Handler (프리셋 버튼·% 입력) — 입력만 받는다. 계산은 「적용」을 눌러야 한다
+    const handleContributionMixChange = (mix: ContributionMix) => {
+        setContributionMix(mix);
+    };
+
+    //공공기여 비율 「적용」
+    const handleApplyContributionMix = () => {
+        setAppliedContributionMix(contributionMix);
+    };
+
+    const contributionMixDirty = JSON.stringify(contributionMix) !== JSON.stringify(appliedContributionMix);
 
     //입력값이 적용값과 다른가 (「적용」 버튼을 활성화할지 판단)
     const unitMixDirty =
@@ -239,12 +336,17 @@ export function useModelPredictForm({
                 if (data.prior_asset) {
                     setPriorAsset(data.prior_asset);
                 }
-                //완화 기준 용적률은 서버가 계산해 내려준다 (4단 체계면 기준용적률).
-                //  zone.far_min 은 조례용적률(= 상한용적률)이라 기준·허용 노드를 골라도
-                //  완화가 0 으로 계산되어 임대 의무가 과소해진다 → 서버 값을 그대로 쓴다
+                //제54조 임대 의무의 기준점은 서버가 계산해 내려준다 (정비계획 상한용적률, 보정계수 반영).
+                //  zone.far_min 은 조례용적률이라 2종일반(조례 200 < 상한 250)에서 임대 의무가 과대해진다
                 if (typeof data.far_base === 'number') {
                     setFarBase(data.far_base);
                 }
+                //종상향 : 고른 용도지역이 기준(필지 원래 용도지역의 평균 단계)보다 높으면 공공기여율이 붙는다
+                setUpzoning(data.upzoning ?? null);
+                setBusinessCorrection(data.business_correction ?? null);
+                setProjectType(data.project_type ?? null);
+                setProjectTypeReason(data.project_type_reason ?? '');
+                setReconstruction(data.reconstruction ?? null);
                 setZoningStale(false);
                 setZoneCalculated(true);
             } else {
@@ -279,8 +381,11 @@ export function useModelPredictForm({
             map_view: mapView,
             zoning: selectedZoning,
             target_ym: targetYm,
+            //조합원분양가 비율 자동(null)은 저장하지 않는다 — 불러올 때 기본값(자동)으로 남는다
             sliders: Object.fromEntries(
-                Object.entries(sliderData).map(([key, config]) => [key, config.value])
+                Object.entries(sliderData)
+                    .filter(([, config]) => config.value !== null && config.value !== undefined)
+                    .map(([key, config]) => [key, config.value as SliderValue])
             ),
             unit_mix: unitMix?.length ? unitMix : null,
             rental_exclusive_area_m2: appliedRentalExclusive,
@@ -367,17 +472,26 @@ export function useModelPredictForm({
         setZoneCalculated(false);
         setCreditToken(null);
         setZoningStale(false);
+        //판정은 고른 필지 전체로 하므로 선택이 바뀌면 지운다 (다시 분석하면 새로 판정된다)
+        setProjectType(null);
+        setProjectTypeReason('');
+        setReconstruction(null);
         if (selectedPnus.length === 0) {
             setZoneInfo(null);
             setCalcResult(null);
             setMemberRange(null);
             setPriorAsset(null);
             setFarBase(null);
+            setUpzoning(null);
+            setBusinessCorrection(null);
             setOwnerPnu('');
             setOwnerExclusive(null);
             setError(null);
         }
     }, [selectedPnus]);
+
+    //조합원 분양가 비율의 "보내는 값". 자동이면 서버가 정하므로 손잡이 위치(응답으로 채운 값)는 재계산 대상이 아니다
+    const memberPriceInput = sliderData.member_price_ratio?.auto ? 'auto' : sliderData.member_price_ratio?.value;
 
     //Contribution 호출 (슬라이더가 바뀔 때마다 자동으로 다시 계산된다)
     const calculate = useCallback(async () => {
@@ -387,14 +501,21 @@ export function useModelPredictForm({
         setError(null);
 
         try {
-            //슬라이더 객체에서 value만 뽑아서 1차원 딕셔너리로 변환
+            //슬라이더 객체에서 value만 뽑아서 1차원 딕셔너리로 변환.
+            //  자동 슬라이더는 null 로 보낸다 → 서버가 정한다 (조합원 분양가 비율 : 관리처분 비례율 100% 역산)
             const formattedSliders = Object.fromEntries(
-                Object.entries(sliderData).map(([key, config]: [any, any]) => [key, config.value])
+                Object.entries(sliderData).map(([key, config]: [any, any]) => [key, config.auto ? null : config.value])
             );
 
             //조합원 수는 ProjectParams 슬라이더가 아니라 별도 필드로 넘긴다
             const { member_count, ...engineSliders } = formattedSliders;
             const sentMemberCount = Number(member_count ?? formData.member_count);
+
+            //고른 용적률 노드의 토지 공공기여 비율 (서버가 노드마다 계산해 내려준다).
+            //  예전 응답(노드별 값이 없음)이면 종상향 최소 비율만 쓴다
+            const far = sliderData.floor_area_ratio;
+            const farIndex = far?.options ? far.options.indexOf(far.value as number) : -1;
+            const farContribution = farIndex >= 0 ? far?.contributions?.[farIndex] : undefined;
 
             const requestPayload = {
                 credit_token: creditToken,
@@ -403,7 +524,16 @@ export function useModelPredictForm({
                 member_count: sentMemberCount,
                 sliders: engineSliders,
                 far_base: farBase ?? zoneInfo.far_min,
+                //토지 공공기여율 (원래 대지 대비). 토지 방식이면 서버가 이만큼 건축 대지를 줄인다.
+                //  다른 방식이면 서버가 이 값에서 노드 용적률에 필요한 기여량을 되돌려 구해 방식대로 채운다
+                public_contribution_ratio: farContribution ?? upzoning?.contribution_ratio ?? 0,
+                //공공기여 기부면적 비율 (「적용」을 누른 값)과 종상향 최소 공공기여 (순부담 하한)
+                contribution_mix: appliedContributionMix,
+                min_contribution_ratio: far?.min_contribution ?? 0,
                 land_value_total: zoneInfo.land_value_total,
+                //사업 유형과 재건축 단지 정보 (/zone 판정 그대로). 재건축이면 의무 임대 0 · 종전자산 = 공동주택가격 기준
+                ...(projectType ? { project_type: projectType } : {}),
+                ...(reconstruction ? { reconstruction } : {}),
                 //「적용」을 누른 값만 보낸다. 손대지 않았으면 아예 안 보내고 서버 실측 기본값을 쓴다
                 //  비율이 0 인 줄과 면적이 비어 있는 줄은 입력 중인 상태라 빼고 보낸다
                 ...(appliedUnitMix
@@ -438,6 +568,17 @@ export function useModelPredictForm({
             if (!provisional) {
                 setCalcResult(data);
                 setInitialCalculationPending(false);
+
+                //자동이면 서버가 역산한 비율을 손잡이 위치로 보여준다.
+                //  자동일 때는 값이 재계산 의존성(memberPriceInput)에 없으므로 여기서 바꿔도 다시 계산되지 않는다
+                const solved = data?.timeline?.member_price_ratio;
+                if (data?.timeline?.member_price_mode === 'auto' && typeof solved === 'number') {
+                    setSliderData((prev) => {
+                        const current = prev.member_price_ratio;
+                        if (!current?.auto || current.value === solved) return prev;
+                        return { ...prev, member_price_ratio: { ...current, value: solved } };
+                    });
+                }
             }
         } catch (err) {
             setError("분담금 계산 중 오류가 발생했습니다.");
@@ -456,20 +597,26 @@ export function useModelPredictForm({
         zoneInfo,
         creditToken,
         sliderData.floor_area_ratio?.value,
+        sliderData.floor_area_ratio?.contributions,
+        sliderData.floor_area_ratio?.min_contribution,
         sliderData.member_count?.value,
-        sliderData.member_price_ratio?.value,
+        memberPriceInput,
         sliderData.other_cost_ratio?.value,
         sliderData.commercial_ratio?.value,
         sliderData.construction_cost_per_pyeong?.value,
         sliderData.general_price_per_m2?.value,
-        sliderData.parking_per_household?.value,
+        sliderData.parking_margin?.value,
         sliderData.rental_floor_band?.value,
         sliderData.project_period_years?.value,
         ownerData.desired_unit,
         appliedUnitMix,
         appliedRentalExclusive,
+        appliedContributionMix,
         priorAsset,
         farBase,
+        upzoning,
+        projectType,
+        reconstruction,
         ownerPnu,
         ownerExclusive,
         formData.name,
@@ -502,6 +649,18 @@ export function useModelPredictForm({
         });
     }, [memberRange]);
 
+    //종상향 미리보기 : 용도지역을 고르는 즉시 기준 대비 몇 단계 올렸는지 보여준다.
+    //  실제 계산(공공기여로 대지 축소)은 계산 버튼으로 구역을 다시 분석한 뒤 반영된다
+    const baseZoning = upzoning?.base_zoning ?? null;
+    const upzoningPreview: UpzoningPreview | null =
+        baseZoning && selectedZoning && ZONING_LADDER.includes(selectedZoning) && ZONING_LADDER.includes(baseZoning)
+            ? {
+                baseZoning,
+                selectedZoning,
+                steps: ZONING_LADDER.indexOf(selectedZoning) - ZONING_LADDER.indexOf(baseZoning),
+            }
+            : null;
+
     //수동 재계산 (폼 submit)
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -528,6 +687,7 @@ export function useModelPredictForm({
         zoningOptions,
         handleSelectZoning,
         handleSliderChange,
+        handleSliderAuto,
         handleSelectUnit,
         unitMix,
         handleUnitMixChange,
@@ -535,12 +695,23 @@ export function useModelPredictForm({
         handleRentalExclusiveChange,
         handleApplyUnitMix,
         unitMixDirty,
+        contributionMix,
+        handleContributionMixChange,
+        handleApplyContributionMix,
+        contributionMixDirty,
         priorAsset,
         ownerPnu,
         handleSelectOwnerPnu,
         ownerExclusive,
         handleOwnerExclusiveChange,
         zoningStale,
+        upzoning,
+        upzoningPreview,
+        businessCorrection,
+        projectType,
+        projectTypeReason,
+        previewType,
+        previewTypeReason,
         handleZoneData,
         handleSubmit,
         zoneCalculated,

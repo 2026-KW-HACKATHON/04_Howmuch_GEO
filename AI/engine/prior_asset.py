@@ -42,6 +42,53 @@ class BuildingSpec:
     structure: str          # 건축물대장 strctCdNm (예: "철근콘크리트구조")
     floor_area_m2: float    # 연면적(㎡). 집합건물이면 내 전유+공용 몫
     elapsed_years: float    # 경과연수 = 평가시점 − 사용승인일
+    cost_index: float = 1.0 # 재조달원가 상대지수 (아파트 = 1.0) → building_cost_index
+
+
+#재조달원가 상대지수 — 행안부 「건축물 시가표준액 조정기준」의 구조지수 × 용도지수
+#  재조달원가는 아파트 공사비로 잡으므로 아파트(철근콘크리트 100 × 아파트 110)로 나눈 상대값을 곱한다.
+#  잔존율(STRUCTURE_TABLE)도 같은 조정기준이라, 원래 산식(신축가격 × 구조 × 용도 × 잔가율)의 구조를 그대로 따른다.
+#  ※ 과세용 지수라 정책 성격이 섞여 있다 (근린생활시설 117 > 아파트 110) — 절대 단가가 아니라 상대 비율로만 쓴다
+#  ※ 2019년판 표 (2018-12 고시). 해마다 거의 바뀌지 않지만 최신판이 나오면 확인할 것
+#구조지수 : 대장 표기를 키워드로 찾는다. 순서가 중요하다 ("철골철근콘크리트" 가 먼저)
+#  대장의 "벽돌구조" 는 연와조(100)·시멘트벽돌조(90) 구분이 없어 시멘트벽돌조로,
+#  "블록구조" 는 보강블록조(90)·시멘트블록조(60) 구분이 없어 시멘트블록조로,
+#  "목구조" 는 노후 주택이라 신공법 목구조(125)가 아니라 목조(78)로 본다
+STRUCTURE_COST_INDEX = [
+    (("철골철근콘크리트",), 120),
+    (("철근콘크리트", "라멘", "프리캐스트", "석구조", "석조", "연와"), 100),
+    (("경량철골",), 60),
+    (("철골",), 100),
+    (("블록",), 60),
+    (("벽돌", "조적"), 90),
+    (("통나무",), 140),
+    (("목",), 78),
+]
+DEFAULT_STRUCTURE_COST_INDEX = 90     # DEFAULT_STRUCTURE(벽돌구조) 와 같은 가정
+
+#용도지수 : 아파트 110 / 단독·다중·다가구·연립·다세대·도시형생활주택 100 / 근린생활시설 117
+#  공동주택은 대장 주용도로 아파트와 연립·다세대를 가를 수 없어 층수로 가른다
+#  (건축법 시행령 별표1 : 주택으로 쓰는 층수가 5개 층 이상이면 아파트)
+APARTMENT_USE_INDEX = 110
+HOUSE_USE_INDEX = 100
+NEIGHBORHOOD_USE_INDEX = 117
+
+
+def building_cost_index(structure: str, main_purpose: str = "", floors: int = 0, etc_purpose: str = "") -> float:
+    name = (structure or "").replace(" ", "")
+    structure_index = next(
+        (index for keywords, index in STRUCTURE_COST_INDEX if any(k in name for k in keywords)),
+        DEFAULT_STRUCTURE_COST_INDEX,
+    )
+    purpose = (main_purpose or "").replace(" ", "")
+    if "공동주택" in purpose:
+        is_apartment = "아파트" in (etc_purpose or "") or floors >= 5
+        use_index = APARTMENT_USE_INDEX if is_apartment else HOUSE_USE_INDEX
+    elif "근린생활" in purpose:
+        use_index = NEIGHBORHOOD_USE_INDEX
+    else:
+        use_index = HOUSE_USE_INDEX
+    return structure_index * use_index / (100 * APARTMENT_USE_INDEX)
 
 
 #건축물대장 구조명 → (내용연수, 최종연도 잔가율, 매년 상각률)
@@ -70,6 +117,7 @@ def building_value(building: BuildingSpec, replacement_cost_per_m2: float) -> fl
     return (
         building.floor_area_m2
         * replacement_cost_per_m2
+        * building.cost_index
         * residual_rate(building.structure, building.elapsed_years)
     )
 
@@ -165,6 +213,50 @@ class ParcelValuation:
     household_count: int = 1        # 세대·가구 수 (조합원 수 실측)
     has_building: bool = False       # False 면 나대지
     land_category: str = ""          # 지목. '도로'·'구거' 는 법정 비율로 감액한다
+    cost_index: float = 1.0          # 재조달원가 상대지수 (building_cost_index, 아파트 = 1.0)
+    owner_type: str = ""             # 토지 소유구분 (V-World 토지소유정보, "" 면 조회 안 함)
+    #주택 공시가격 (V-World) — 있으면 이 필지의 종전자산은 공시가격 ÷ 현실화율이다 (토지 + 원가법 대신).
+    #  주택은 호 단위로 거래사례 감정평가를 한다 — 원가법이면 신축 빌라가 실거래의 0.69배로 낮게 잡혔다
+    housing_kind: str = ""           # "공동"(다세대·연립·아파트 공동주택가격) · "단독"(단독·다가구 개별주택가격) · "" 없음
+    housing_price: float = 0.0       # 공시가격 합계 (만원, 그해 1월 1일). 공동은 필지의 모든 호 합계
+    housing_units: int = 0           # 공동주택가격 호수
+
+
+#국·공유지 소유구분 — V-World 토지소유정보 posesnSeCode
+#  02 국유지 · 04 시·도유지 · 05 군유지(시·군·구유지). 실측 : 월계동 도로 '04 시 도유지', 공원 '05 군유지'
+#  국공유지는 조합원 자산이 아니므로 종전자산과 조합원 수에서 뺀다
+#  (정비기반시설이면 무상양도, 그 밖이면 조합이 매입한다 — 어느 쪽이든 종전자산은 아니다)
+PUBLIC_OWNER_KEYWORDS = ("국유", "도유", "시유", "군유", "구유")
+
+
+def is_public_owner(owner_type: str) -> bool:
+    name = (owner_type or "").replace(" ", "")
+    return any(k in name for k in PUBLIC_OWNER_KEYWORDS)
+
+
+#필지의 조합원(분양대상자) 수 — 서울특별시 도시 및 주거환경정비 조례 (2025-03-27 개정, 제9548호)
+#  제36조제2항제3호 : 1주택 또는 1필지의 토지를 여러 명이 소유해도 1명의 분양대상자 → 단독·다가구는 대장 가구수와 상관없이 1명
+#  부칙 제28조제1항 : 1997-01-15 전에 가구별로 지분 또는 구분소유등기를 마친 다가구는 허가받은 가구수 안에서 가구별 1명
+#    토지소유정보의 소유권 변동일자로 1997-01-15 전부터 지분을 가진 소유자가 2명 이상이면 가구별 지분 다가구로 보고 min(가구수, 그 수).
+#    (변동일자가 없으면 예전 대용 : 사용승인 1997-01-15 이전 + 공유자 2명 이상)
+#    실측 : 월계동 47-2 (1994 사용승인, 공유자 2) 는 두 사람이 2020-07-16 함께 이전받은 한 채 → 1명. 같은 세대(부부) 여부는 API 에 없다
+#  공동주택(다세대·연립·아파트)은 호마다 소유자가 따로라 세대수 그대로. 1세대 여러 호(제36조제2항제2호)는 못 가려낸다
+#  예전에는 다가구 가구수(fmlyCnt, 월계동 최대 16)를 그대로 조합원으로 세 조합원 수가 과대했다 (2026-10-08 정정)
+MULTI_HOUSEHOLD_SPLIT_BEFORE = "19970115"
+
+
+def ordinance_member_count(
+    main_purpose: str, approval_ymd: str, household_count: int, owner_count: int, owners_before_1997: int | None = None,
+) -> int:
+    households = max(int(household_count or 1), 1)
+    if "단독주택" not in (main_purpose or ""):
+        return households
+    if owners_before_1997 is not None:
+        return min(households, int(owners_before_1997)) if int(owners_before_1997) >= 2 else 1
+    approved = (approval_ymd or "").strip()
+    if approved and approved < MULTI_HOUSEHOLD_SPLIT_BEFORE and int(owner_count or 0) >= 2:
+        return min(households, int(owner_count))
+    return 1
 
 
 @dataclass
@@ -189,6 +281,15 @@ class ZonePriorAsset:
     building_parcel_count: int
     parcels: list[ParcelPriorAsset] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    #종전자산에 넣은 필지(국공유지 제외)의 토지면적 합계(㎡)
+    land_area_m2: float = 0.0
+    #주택 공시가격으로 잡은 필지의 합계(만원)와 필지 수. total = land_total + building_total + housing_total
+    housing_total: float = 0.0
+    housing_parcel_count: int = 0
+    #지목 '대' 필지의 토지 감정가(공시지가 × λ) 합계와 면적 — ㎡당 평균이 의무 임대 부속토지 인수가격이다 (라우터).
+    #  주택 공시가격으로 잡은 필지도 토지분은 여기에 넣는다. 도로·구거(1/3 감액)는 빼서 순수 택지 단가가 되게 한다
+    dae_land_total: float = 0.0
+    dae_land_area_m2: float = 0.0
 
 
 #구역 종전자산 총액 + 조합원 수 실측
@@ -196,22 +297,42 @@ class ZonePriorAsset:
 #  지금까지 member_count 는 세대수 기준 슬라이더(0.75~1.25배)였다.
 #  건축물대장으로 세면 슬라이더 하나가 L2 → L1 으로 내려간다.
 #  조합원 수는 사업이익을 나누는 분모라 분담금에 직접 영향이 크다
+#housing_rates : 주택 공시가격 현실화율 {"공동": 0.69, "단독": 0.536} — 주면 공시가격이 있는 필지를 공시가격 ÷ 현실화율로 잡는다
+#housing_multiplier : 공시가격 기준 시점(그해 1월) → 평가 시점 배수 (라우터가 땅값 상승률로 준다)
 def aggregate_zone(
     parcels: list[ParcelValuation],
     land_multiplier: float,
     replacement_cost_per_m2: float,
+    housing_rates: dict[str, float] | None = None,
+    housing_multiplier: float = 1.0,
 ) -> ZonePriorAsset:
     rows: list[ParcelPriorAsset] = []
     warnings: list[str] = []
     land_total = building_total = official_total = 0.0
+    land_area = 0.0
     member_count = 0
     building_parcel_count = 0
     no_price_count = 0
     discounted_count = 0
+    unknown_road_count = 0
+    public_count = 0
+    public_area = 0.0
+    housing_total = 0.0
+    housing_parcel_count = 0
+    dae_land_total = dae_land_area = 0.0
 
     for parcel in parcels:
+        #국공유지 : 조합원 자산이 아니다 → 종전자산·공시지가 총액·조합원 수에서 모두 뺀다
+        #  (대지면적에는 남는다 — 새 단지의 대지로 들어간다)
+        #  집합건물은 소유자가 호마다 달라 소유정보 표본만으로 필지 전체를 판단할 수 없다 → 단독 소유 필지만 뺀다
+        #  (소유정보 자체도 앞 20행 표본이 모두 국공유일 때만 국공유로 내려온다 — zone._request_possession)
+        if is_public_owner(parcel.owner_type) and parcel.household_count <= 1:
+            public_count += 1
+            public_area += parcel.land_area_m2
+            continue
+
         building = (
-            BuildingSpec(parcel.structure, parcel.building_area_m2, parcel.elapsed_years)
+            BuildingSpec(parcel.structure, parcel.building_area_m2, parcel.elapsed_years, parcel.cost_index)
             if parcel.has_building and parcel.building_area_m2 > 0
             else None
         )
@@ -219,6 +340,8 @@ def aggregate_zone(
         category_rate = LAND_CATEGORY_RATE.get(parcel.land_category, 1.0)
         if category_rate < 1.0:
             discounted_count += 1
+            if not parcel.owner_type:
+                unknown_road_count += 1
 
         asset = estimate(
             land_area_m2=parcel.land_area_m2,
@@ -228,12 +351,28 @@ def aggregate_zone(
             replacement_cost_per_m2=replacement_cost_per_m2,
         )
 
-        land_total += asset.land
-        building_total += asset.building
+        #의무 임대 부속토지 단가의 바탕 : 지목 '대' 필지의 토지 감정가 (감액 없는 순수 택지)
+        if parcel.land_category == "대":
+            dae_land_total += asset.land
+            dae_land_area += parcel.land_area_m2
+
+        #주택 공시가격이 있으면 그 값 ÷ 현실화율 (토지 + 건물이 들어 있는 호·주택 단위 가격)
+        rate = (housing_rates or {}).get(parcel.housing_kind)
+        if rate and parcel.housing_price > 0:
+            value = parcel.housing_price / rate * housing_multiplier
+            asset = PriorAsset(0.0, 0.0, value, value / (parcel.land_area_m2 * parcel.land_price_per_m2 / 10_000)
+                               if parcel.land_area_m2 * parcel.land_price_per_m2 else 0.0, asset.residual)
+            housing_total += value
+            housing_parcel_count += 1
+        else:
+            land_total += asset.land
+            building_total += asset.building
+            if building is not None:
+                building_parcel_count += 1
+
         official_total += parcel.land_area_m2 * parcel.land_price_per_m2 / 10_000
+        land_area += parcel.land_area_m2
         member_count += max(parcel.household_count, 1)
-        if building is not None:
-            building_parcel_count += 1
 
         #공시지가 조회 실패 시 0 이 들어온다. 그 필지는 토지분이 0 이 되어
         #건물분만 남고, r_구역 을 조용히 끌어올린다 (약분 구조도 왜곡된다)
@@ -251,22 +390,31 @@ def aggregate_zone(
             )
         )
 
-    total = land_total + building_total
+    total = land_total + building_total + housing_total
 
-    #건물분을 하나도 못 구하면 예전과 똑같이 약분된다. 조용히 넘기면 안 된다
-    if parcels and building_parcel_count == 0:
+    #건물분을 하나도 못 구하면 예전과 똑같이 약분된다. 조용히 넘기면 안 된다 (주택 공시가격으로 잡은 필지는 개별값이라 괜찮다)
+    if parcels and building_parcel_count == 0 and housing_parcel_count == 0:
         warnings.append(
             "건축물대장을 받아오지 못해 건물분이 0 입니다. "
             "분담금이 구역 평균값으로만 나옵니다 (개인별 차이가 반영되지 않습니다)."
         )
 
-    #도로·구거는 법정 비율(1/3)로 감액했다. 그 가정의 한계를 알린다
-    if discounted_count:
+    #국공유지는 뺐다 (토지소유정보로 확인)
+    if public_count:
         warnings.append(
-            f"{discounted_count}개 필지가 지목상 도로·구거라 토지분을 1/3 로 감액했습니다 "
-            "(토지보상법 시행규칙 제26조, 사실상의 사도 기준). "
-            "사도법상 사도면 1/5, 국·공유지 도로면 조합원 자산이 아니라 제외해야 합니다."
+            f"{public_count}개 필지({public_area:,.0f}㎡)가 국·공유지라 종전자산과 조합원 수에서 뺐습니다 "
+            "(조합원 자산이 아니다. 정비기반시설이면 무상양도, 그 밖이면 조합이 매입한다)."
         )
+
+    #사유 도로·구거는 법정 비율(1/3)로 감액했다. 그 가정의 한계를 알린다
+    if discounted_count:
+        message = (
+            f"{discounted_count}개 필지가 지목상 도로·구거(사유지)라 토지분을 1/3 로 감액했습니다 "
+            "(토지보상법 시행규칙 제26조, 사실상의 사도 기준). 사도법상 사도면 1/5 입니다."
+        )
+        if unknown_road_count:
+            message += f" 그중 {unknown_road_count}개는 소유구분을 확인하지 못했습니다 — 국·공유지면 빼야 합니다."
+        warnings.append(message)
 
     #공시지가를 못 받은 필지. 토지분이 0 이라 종전자산이 과소평가된다
     if no_price_count:
@@ -294,8 +442,13 @@ def aggregate_zone(
         official_total=official_total,
         ratio=total / official_total if official_total else 0.0,
         member_count=max(member_count, 1),
-        parcel_count=len(parcels),
+        parcel_count=len(parcels) - public_count,
         building_parcel_count=building_parcel_count,
         parcels=rows,
         warnings=warnings,
+        land_area_m2=land_area,
+        housing_total=housing_total,
+        housing_parcel_count=housing_parcel_count,
+        dae_land_total=dae_land_total,
+        dae_land_area_m2=dae_land_area,
     )

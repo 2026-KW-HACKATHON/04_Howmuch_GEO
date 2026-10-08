@@ -14,3 +14,6 @@ mock_data*
 #=== AI 엔진 가정치·예제 (팀 공유 X) ===#
 AI/engine/wolgye1_params.py
 AI/engine/examples.py
+
+# 로컬 전용 docker 오버라이드 (Docker Desktop host networking 우회)
+docker-compose.override.yml

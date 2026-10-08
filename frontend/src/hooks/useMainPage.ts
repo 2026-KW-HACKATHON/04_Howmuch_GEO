@@ -159,20 +159,10 @@ export const useMainPage = () => {
     }, []);
 
     //Zone 데이터 API 호출 Handler
-    const handleZoneData = useCallback(async (
-        pnus: string[],
-        zoning?: string,
-        parcels?: ParcelInfo[],
-        targetYm?: string,
-        householdCount?: number,
-    ) => {
+    //  zoning : 사용자가 고른 용도지역. 넘기지 않으면 서버가 필지 원래 용도지역으로 계산해 종상향·노드가 바뀌지 않는다
+    const handleZoneData = useCallback(async (pnus: string[], zoning?: string) => {
         try {
-            const response = await getZoneInfo(pnus, {
-                parcels: parcels ?? selectedParcels,
-                zoning,
-                targetYm,
-                householdCount,
-            });
+            const response = await getZoneInfo(pnus, { parcels: selectedParcels, zoning });
             if (Number.isInteger(response.credits_remaining)) {
                 setDailyCredits(response.credits_remaining);
                 setCreditsUnavailable(false);
