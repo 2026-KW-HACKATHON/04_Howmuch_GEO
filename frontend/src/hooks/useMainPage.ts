@@ -187,7 +187,6 @@ export const useMainPage = () => {
         }
     }
 
-
     return {
         isOpen,
         isAuthenticated,
@@ -206,6 +205,6 @@ export const useMainPage = () => {
         dailyCredits,
         creditsUnavailable,
         toggleResetCredit,
-        kakaoPayPopUpOn
+        kakaoPayPopUpOn,
     };
 }

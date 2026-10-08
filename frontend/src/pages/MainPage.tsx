@@ -4,7 +4,7 @@ import KakaoMap from "../components/KakaoMap"
 import SideBar from '../components/SideBar';
 import ModelPredictForm from '../components/ModelPredictForm';
 import NewsPanel from '../components/NewsPanel';
-import ReCAPTCHA from 'react-google-recaptcha';
+import StartupModal from '../components/StartupModal'
 import { useMainPage } from '../hooks/useMainPage';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -35,6 +35,21 @@ export default function MainPage() {
         dailyCredits,
         creditsUnavailable,
     } = useMainPage();
+
+    const [startupModalOpen, setStartupModalOpen] = useState<boolean>(true);
+
+    const toggleModal = () => {
+        if (startupModalOpen) {
+            setStartupModalOpen(false);
+        } else {
+            setStartupModalOpen(true);
+        }
+    }
+
+    //페이지 처음 오픈시 기본동작
+    useEffect(() => {
+        setStartupModalOpen(true);
+    },[]);
 
     //프로필 메뉴 외부 클릭 시 닫기 및 ESC 키로 닫기
     useEffect(() => {
@@ -138,7 +153,11 @@ export default function MainPage() {
                         )}
                     </>
                 }
-            />               
+            />           
+
+            {startupModalOpen && (
+                <StartupModal onToggleModal={toggleModal}/>
+            )}    
         </div>
     );
 };
