@@ -123,17 +123,37 @@ export default function ContributionPanel({
     //평형 구성 입력란에 채울 값.
     //  손대기 전에는 서버가 실제로 배분한 세대수에서 비율을 거꾸로 만들어 보여준다.
     //  그래야 "지금 뭘로 계산했는지" 가 보이고, 한 칸만 고쳐도 나머지가 유지된다
+    //  반올림 오차는 가장 큰 줄에 몰아 합계를 정확히 100 으로 맞춘다 (그래야 손대지 않고도 「적용」 조건을 만족한다)
     const derivedRows: UnitMixEntry[] = units.map((unit) => ({
         exclusive_area_m2: unit.exclusive_area_m2,
         household_ratio: saleCount ? Math.round((unit.count / saleCount) * 1000) / 10 : 0,
     }));
+    if (derivedRows.length > 0) {
+        const drift = 100 - derivedRows.reduce((sum, row) => sum + row.household_ratio, 0);
+        const largest = derivedRows.reduce((best, row, i) => (row.household_ratio > derivedRows[best].household_ratio ? i : best), 0);
+        derivedRows[largest].household_ratio = Math.round((derivedRows[largest].household_ratio + drift) * 10) / 10;
+    }
     const mixRows: UnitMixEntry[] =
         unitMix ?? (derivedRows.length > 0 ? derivedRows : [EMPTY_MIX_ROW]);
 
+    //비율 합계 (세대수 기준 %). 100 을 넘을 수 없고, 100 이어야 적용할 수 있다
+    const ratioSum = Math.round(mixRows.reduce((sum, row) => sum + (row.household_ratio || 0), 0) * 10) / 10;
+    const ratioComplete = Math.abs(ratioSum - 100) < 0.05;
+
+    //사용 면적 : 평형에 나눠 줄 수 있는 분양 공급면적(주택 공급면적 − 임대 − 기부 공공임대) 중 입력한 비율만큼.
+    //  연면적이 아니다 — 지하·상가·공용(공급면적 밖)과 임대 몫은 평형에 쓸 수 없다
+    const saleSupplyM2 = result?.project.sale_supply_m2 ?? 0;
+    const usedSupplyM2 = saleSupplyM2 * Math.min(ratioSum, 100) / 100;
+
     //입력칸을 고치면 그 순간부터 사용자 값으로 계산한다 (서버 기본값에서 손 떼는 시점)
+    //  비율은 다른 줄과 합쳐 100 을 넘지 않게 자른다
     const editRow = (index: number, key: keyof UnitMixEntry, raw: string) => {
-        const value = raw === '' ? 0 : Number(raw);
+        let value = raw === '' ? 0 : Number(raw);
         if (Number.isNaN(value) || value < 0) return;
+        if (key === 'household_ratio') {
+            const others = mixRows.reduce((sum, row, i) => (i === index ? sum : sum + (row.household_ratio || 0)), 0);
+            value = Math.min(value, Math.max(Math.round((100 - others) * 10) / 10, 0));
+        }
         onUnitMixChange(mixRows.map((row, i) => (i === index ? { ...row, [key]: value } : row)));
     };
 
@@ -352,6 +372,15 @@ export default function ContributionPanel({
                             <span className="text-[10.5px] text-gray-400">
                                 {mixRows.length}/{MAX_UNIT_TYPES}
                             </span>
+                            {/* 사용 면적 (입력 비율만큼 / 분양 공급면적). 계산 결과가 있어야 분모를 안다 */}
+                            {saleSupplyM2 > 0 && (
+                                <span
+                                    className={`text-[10.5px] tabular-nums ${ratioComplete ? 'text-gray-400' : 'text-amber-600'}`}
+                                    title="분양 공급면적 = 주택 공급면적 − 임대 − 기부채납 공공임대 (연면적 아님)"
+                                >
+                                    사용 면적 ({Math.round(usedSupplyM2).toLocaleString()} / {Math.round(saleSupplyM2).toLocaleString()}㎡)
+                                </span>
+                            )}
                             <button
                                 type="button"
                                 onClick={addRow}
@@ -429,18 +458,21 @@ export default function ContributionPanel({
                         <button
                             type="button"
                             onClick={onApplyUnitMix}
-                            disabled={!unitMixDirty}
+                            disabled={!unitMixDirty || !ratioComplete}
                             className={`mt-2 w-full rounded-md py-1.5 text-[12px] font-semibold transition ${
-                                unitMixDirty
+                                unitMixDirty && ratioComplete
                                     ? 'bg-gray-900 text-white hover:bg-gray-800'
                                     : 'bg-gray-100 text-gray-400'
                             }`}
                         >
-                            {unitMixDirty ? '평형 구성 적용' : '적용됨'}
+                            {!ratioComplete
+                                ? `비율 합계 ${ratioSum}% — ${Math.round((100 - ratioSum) * 10) / 10}% 남음`
+                                : unitMixDirty ? '평형 구성 적용' : '적용됨'}
                         </button>
 
                         <p className="mt-1.5 text-[10.5px] leading-relaxed text-gray-400">
-                            비율은 <b>세대수 기준</b>입니다. 합이 100%가 아니어도 그 비율대로 맞춥니다.
+                            비율은 <b>세대수 기준</b>이고 합계가 100%여야 적용됩니다.
+                            사용 면적은 평형에 나눠 줄 수 있는 분양 공급면적(주택 공급면적 − 임대) 기준입니다.
                             임대 비율은 용적률 완화분에서 법정으로 정해져 직접 바꿀 수 없습니다 (도시정비법 제54조).
                         </p>
                     </div>

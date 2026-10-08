@@ -391,6 +391,7 @@ def calc_project(params: ProjectParams, alloc: Allocation) -> ProjectResult:
         total_prior_asset=total_prior_asset,
         proportional_rate=proportional_rate,
         warnings=warnings,
+        sale_supply_m2=alloc.sale_supply_m2,
     )
 
 
