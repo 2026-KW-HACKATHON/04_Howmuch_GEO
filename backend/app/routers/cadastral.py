@@ -10,7 +10,7 @@ import logging
 #필지 데이터 반환 API 라우터 설정
 router = APIRouter(
     prefix="/api/v1",
-    tags=["Cadastral Engine"]
+    tags=["Cadastral Router"]
 )
 
 #백엔드 Logger

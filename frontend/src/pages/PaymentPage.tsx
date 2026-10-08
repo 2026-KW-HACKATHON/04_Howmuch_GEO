@@ -80,8 +80,12 @@ export default function PaymentPage() {
     return (
         <main className="min-h-screen bg-[#f5f7f4] text-slate-900">
             <header className="flex h-16 items-center justify-between border-b border-slate-200 bg-white px-5 sm:px-10">
-                <Link to="/main" className="text-lg font-bold tracking-tight text-slate-900">
-                    얼마 <span className="font-medium text-emerald-700">GEO</span>
+                <Link to="/main" className="flex w-full items-center justify-center">
+                    <img
+                        src="/banner.png"
+                        alt="얼마 GEO 배너"
+                        className="h-24 w-auto object-contain sm:h-28"
+                    />
                 </Link>
                 <Link to="/main" className="text-sm font-medium text-slate-600 hover:text-slate-950">
                     서비스로 돌아가기
