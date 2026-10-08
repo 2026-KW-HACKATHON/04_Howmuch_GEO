@@ -5,9 +5,11 @@ from sqlalchemy.orm import Session
 from app.database.database_connection import get_db
 from app.exceptions.exceptions_handler import BadRequestException, ConflictException, UnauthorizedException
 from app.models.account import AccountProfile, Organization, OrganizationMembership
+from app.models.organization_scenario import LegacyOrganizationScenario, OrganizationScenario
 from app.models.user import User
 from app.services.plan_service import get_plan
 from app.schemas.user.user_request import JoinOrganizationRequest
+from app.schemas.organization_scenario import OrganizationScenarioCreate
 
 #조직 라우터
 router = APIRouter(
@@ -25,6 +27,160 @@ def _require_user_id(request: Request) -> int:
 #조직의 Plan 이 결제되어 Active 된 상태이며, 사용 가능 기간이 남아있는지 확인하는 함수
 def _active_organization(session: Session, organization: Organization) -> bool:
     return organization.status == "active" and organization.paid_until is not None and organization.paid_until > datetime.now(timezone.utc)
+
+#유효한 조직에서 시나리오 조회 가능하게 하는 함수
+def _get_accessible_scenario_organization(session: Session, user_id: int) -> Organization:
+    organization = session.execute(
+        select(Organization).where(Organization.leader_user_id == user_id)
+    ).scalar_one_or_none()
+    if organization:
+        if not _active_organization(session, organization):
+            raise BadRequestException("활성 조합 플랜이 필요합니다.")
+        return organization
+
+    membership = session.execute(
+        select(OrganizationMembership).where(
+            OrganizationMembership.user_id == user_id,
+            OrganizationMembership.status == "active",
+        )
+    ).scalar_one_or_none()
+    organization = session.get(Organization, membership.organization_id) if membership else None
+    if not organization or not _active_organization(session, organization):
+        raise BadRequestException("활성 조합에 가입된 구성원만 조합 자료를 볼 수 있습니다.")
+    return organization
+
+#조직 시나리오 묶음 조회 함수
+@router.get("/scenarios")
+def get_organization_scenarios(request: Request, session: Session = Depends(get_db)):
+    user_id = _require_user_id(request)
+    organization = _get_accessible_scenario_organization(session, user_id)
+    scenarios = session.execute(
+        select(OrganizationScenario)
+        .where(OrganizationScenario.organization_id == organization.organization_id)
+        .order_by(OrganizationScenario.updated_at.desc(), OrganizationScenario.scenario_id.desc())
+    ).scalars().all()
+
+    legacy = session.get(LegacyOrganizationScenario, organization.organization_id)
+    if legacy:
+        scenario = OrganizationScenario(
+            organization_id=organization.organization_id,
+            scenario_name="기존 기준안",
+            scenario_data=legacy.scenario_data,
+            updated_by_user_id=legacy.updated_by_user_id,
+            updated_at=legacy.updated_at,
+        )
+        session.add(scenario)
+        session.delete(legacy)
+        session.commit()
+        scenarios = session.execute(
+            select(OrganizationScenario)
+            .where(OrganizationScenario.organization_id == organization.organization_id)
+            .order_by(OrganizationScenario.updated_at.desc(), OrganizationScenario.scenario_id.desc())
+        ).scalars().all()
+
+    return {
+        "scenarios": [
+            {
+                "id": scenario.scenario_id,
+                "name": scenario.scenario_name,
+                "updated_at": scenario.updated_at.isoformat(),
+            }
+            for scenario in scenarios
+        ],
+    }
+
+#시나리오 불러오기 API 엔드포인트
+@router.get("/scenarios/{scenario_id}")
+def get_organization_scenario(
+    scenario_id: int,
+    request: Request,
+    session: Session = Depends(get_db),
+):
+    user_id = _require_user_id(request)
+    organization = _get_accessible_scenario_organization(session, user_id)
+
+    scenario = session.execute(
+        select(OrganizationScenario).where(
+            OrganizationScenario.scenario_id == scenario_id,
+            OrganizationScenario.organization_id == organization.organization_id,
+        )
+
+    ).scalar_one_or_none()
+    if not scenario:
+        raise BadRequestException("조합 기준안을 찾을 수 없습니다.")
+        
+    return {
+        "scenario": scenario.scenario_data,
+        "updated_at": scenario.updated_at.isoformat(),
+    }
+
+#시나리오 생성 API 엔드포인트
+@router.post("/scenarios", status_code=status.HTTP_201_CREATED)
+def save_organization_scenario(
+    body: OrganizationScenarioCreate,
+    request: Request,
+    session: Session = Depends(get_db),
+):
+    user_id = _require_user_id(request)
+
+    organization = session.execute(
+        select(Organization).where(
+            Organization.leader_user_id == user_id
+        )
+    ).scalar_one_or_none()
+
+    if not organization:
+        raise BadRequestException("조합장만 조합 기준안을 저장할 수 있습니다.")
+    if not _active_organization(session, organization):
+        raise BadRequestException("활성 조합 플랜이 필요합니다.")
+
+    scenario = OrganizationScenario(
+        organization_id=organization.organization_id,
+        scenario_name=body.name,
+        scenario_data=body.scenario.model_dump(mode="json"),
+        updated_by_user_id=user_id,
+    )
+    session.add(scenario)
+    session.commit()
+    session.refresh(scenario)
+    return {
+        "id": scenario.scenario_id,
+        "name": scenario.scenario_name,
+        "scenario": scenario.scenario_data,
+        "updated_at": scenario.updated_at.isoformat(),
+    }
+
+#시나리오 삭제 API 엔드포인트
+@router.delete("/scenarios/{scenario_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_organization_scenario(
+    scenario_id: int,
+    request: Request,
+    session: Session = Depends(get_db),
+):
+    user_id = _require_user_id(request)
+
+    organization = session.execute(
+        select(Organization).where(
+            Organization.leader_user_id == user_id
+        )
+    ).scalar_one_or_none()
+
+    if not organization:
+        raise BadRequestException("조합장만 조합 기준안을 삭제할 수 있습니다.")
+    if not _active_organization(session, organization):
+        raise BadRequestException("활성 조합 플랜이 필요합니다.")
+
+    scenario = session.execute(
+        select(OrganizationScenario).where(
+            OrganizationScenario.scenario_id == scenario_id,
+            OrganizationScenario.organization_id == organization.organization_id,
+        )
+    ).scalar_one_or_none()
+    if not scenario:
+        raise BadRequestException("조합 기준안을 찾을 수 없습니다.")
+    session.delete(scenario)
+    session.commit()
+
 
 #가입된 조직 확인 API 엔드포인트
 @router.get("/me")
@@ -77,6 +233,7 @@ def get_my_organization(request: Request, session: Session = Depends(get_db)):
         return {
             "account_type": account_type,
             "role": "member",
+            "organization_id": organization.organization_id if organization else None,
             "membership_status": membership.status,
             "organization_name": session.get(User, organization.leader_user_id).user_name if organization else None,
             "plan_name": plan.name if plan else None,

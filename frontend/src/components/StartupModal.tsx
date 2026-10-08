@@ -1,9 +1,9 @@
-import React from 'react'
-
+//접속시 팝업 모달 스키마
 interface StartupModalSchema {
     onToggleModal: () => void;
 }
 
+//접속시 팝업 모달 컴포넌트
 export default function StartupModal({onToggleModal} : StartupModalSchema){
     return (
         <div className="fixed inset-0 bg-black/70 z-100">
